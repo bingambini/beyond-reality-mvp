@@ -21,3 +21,4 @@ edge-tts
 # Utilities
 requests
 aiohttp
+Pillow
