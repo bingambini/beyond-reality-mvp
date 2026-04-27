@@ -2,7 +2,7 @@ import streamlit as st
 import json
 import google.generativeai as genai
 from huggingface_hub import InferenceClient
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import io
 
 # გვერდის კონფიგურაცია
@@ -26,15 +26,12 @@ def get_best_gemini_model(api_key):
     try:
         genai.configure(api_key=api_key)
         models = genai.list_models()
-        preferred_models = ["gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"]
-        available_models = [m.name.replace("models/", "") for m in models if 'generateContent' in m.supported_generation_methods]
-        
-        for preferred in preferred_models:
-            if preferred in available_models:
-                return genai.GenerativeModel(preferred)
-        return genai.GenerativeModel(available_models[0]) if available_models else genai.GenerativeModel("gemini-pro")
-    except Exception as e:
-        return genai.GenerativeModel("gemini-pro")
+        preferred = ["gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"]
+        available = [m.name.replace("models/", "") for m in models if 'generateContent' in m.supported_generation_methods]
+        for p in preferred:
+            if p in available: return genai.GenerativeModel(p)
+        return genai.GenerativeModel(available[0]) if available else genai.GenerativeModel("gemini-pro")
+    except: return genai.GenerativeModel("gemini-pro")
 
 secrets = load_secrets()
 template = load_template()
@@ -51,65 +48,66 @@ with col3: st.metric("Template", "📄 Loaded")
 tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Smart Director v2.0)")
+    st.subheader("🔮 ტესტის გენერაცია (Director v3.0 — ჰორიზონტალური კოლაჟი)")
     
+    # პარამეტრების არჩევა ღილაკამდე
     lang = st.selectbox("🌐 ენა", template["languages"], index=0)
-    setting = st.selectbox("🖼️ სცენა (ფონი)", template["generation"]["image_settings"])
+    setting = st.selectbox("🖼️ სცენა (ერთიანი ბექგრაუნდი)", template["generation"]["image_settings"])
     
     if st.button("🚀 დაიწყე გენერაცია", type="primary"):
-        with st.spinner("🤖 დირიჟორი მუშაობს: ტექსტი → 3 განსხვავებული კარი → გაერთიანება..."):
+        with st.spinner("🤖 დირიჟორი მუშაობს: ბექგრაუნდი → 3 კარი → ჰორიზონტალური შეკერვა..."):
             try:
-                # --- A. ტექსტის გენერაცია ---
+                # A. ტექსტის გენერაცია
                 model = get_best_gemini_model(secrets["GEMINI"])
                 prompt_text = template["generation"]["text_prompt"].replace("{language}", lang)
                 text_response = model.generate_content(prompt_text)
                 
-                # --- B. სურათების გენერაცია (დირიჟორის მკაცრი ლოგიკა) ---
+                # B. ვიზუალური გენერაცია (დირიჟორის ლოგიკა)
                 client = InferenceClient(api_key=secrets["HF"])
-                base_prompt = template["generation"]["image_prompt"].replace("{setting}", setting)
                 
-                # დირიჟორი აძლევს 3 რადიკალურად განსხვავებულ სტილს
-                # ეს უზრუნველყოფს, რომ მომხმარებელმა დაინახოს A, B და C ვარიანტები
-                door_styles = [
-                    "ancient heavy wooden door with iron rings, mysterious forest background, close up", # კარი A
-                    "futuristic metal door with neon blue light, sci-fi atmosphere, close up",           # კარი B
-                    "magical door made of crystal and glowing vines, fantasy atmosphere, close up"      # კარი C
+                # 1. ერთიანი ბექგრაუნდი
+                bg_prompt = f"cinematic {setting} environment, foggy, mysterious atmosphere, empty ground space, cinematic lighting, 9:16"
+                bg_img = client.text_to_image(bg_prompt, model="black-forest-labs/FLUX.1-schnell")
+                
+                # 2. სამი განსხვავებული კარი
+                door_prompts = [
+                    "ancient heavy wooden door with iron rings, front view, isolated",
+                    "futuristic sleek metal door with glowing blue accents, front view, isolated",
+                    "magical crystalline door with glowing vines, front view, isolated"
                 ]
+                doors = [client.text_to_image(p, model="black-forest-labs/FLUX.1-schnell") for p in door_prompts]
                 
-                generated_images = []
+                # 3. ჰორიზონტალური კომპოზიცია 9:16 კანვასზე
+                W, H = 1080, 1920  # 9:16 ფორმატი
+                canvas = Image.new('RGB', (W, H), (12, 12, 18)) # მუქი საბაზისო ფერი
+                canvas.paste(bg_img.resize((W, H)), (0, 0))
                 
-                # ციკლი 3-ჯერ
-                for i in range(3):
-                    # მკაცრი პრომპტი: მხოლოდ ერთი კარი, ცენტრში
-                    strict_prompt = f"High quality, photorealistic, SINGLE door centered, {door_styles[i]}, vertical composition, 8k, --ar 9:16"
+                # ზომების გათვლა
+                door_w = W // 3
+                door_h = int(H * 0.55)
+                y_pos = int(H * 0.22) # კარები მოთავსდება შუაში
+                
+                for i, door in enumerate(doors):
+                    door_resized = door.resize((door_w, door_h))
+                    x_pos = i * door_w
+                    canvas.paste(door_resized, (x_pos, y_pos))
+                
+                # 4. ლეიბლების დამატება (A, B, C)
+                draw = ImageDraw.Draw(canvas)
+                try:
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 70)
+                except:
+                    font = ImageFont.load_default()
                     
-                    img = client.text_to_image(
-                        prompt=strict_prompt, 
-                        model="black-forest-labs/FLUX.1-schnell",
-                        guidance_scale=7.5,
-                        num_inference_steps=25
-                    )
-                    generated_images.append(img)
+                for i, label in enumerate(["A", "B", "C"]):
+                    txt_w, txt_h = draw.textlength(label, font=font), 70
+                    x = (i * door_w) + (door_w // 2) - (txt_w // 2)
+                    y = y_pos + door_h + 30
+                    draw.text((x, y), label, fill=(255, 255, 255), font=font)
                 
-                # --- C. შეკერვა (Collage Logic) ---
-                # ვაერთიანებთ 3 სურათს ერთ ვერტიკალურ ფლაერად
-                target_size = (768, 1024)
-                resized_images = [img.resize(target_size) for img in generated_images]
-                
-                total_height = target_size[1] * 3
-                # ვქმნით შავ ფონს (კანვასს)
-                canvas = Image.new('RGB', (target_size[0], total_height), color=(10, 10, 10))
-                
-                # ვაკრავთ სურათებს (ზემოდან ქვემოთ)
-                canvas.paste(resized_images[0], (0, 0))
-                canvas.paste(resized_images[1], (0, target_size[1]))
-                canvas.paste(resized_images[2], (0, target_size[1] * 2))
-                
-                # --- შედეგების შენახვა ---
                 st.session_state['gen_text'] = text_response.text
                 st.session_state['gen_image'] = canvas
-                
-                st.success("✅ დირიჟორმა წარმატებით შექმნა 3 ვარიანტი!")
+                st.success("✅ დირიჟორმა წარმატებით ააწყო ჰორიზონტალური კომპოზიცია!")
                 
             except Exception as e:
                 st.error(f"❌ შეცდომა: {str(e)}")
@@ -117,12 +115,12 @@ with tab1:
     # შედეგების ჩვენება
     if 'gen_text' in st.session_state:
         st.divider()
-        st.subheader("📝 შედეგები (ტრიპტიქი)")
+        st.subheader("📝 შედეგები (ჰორიზონტალური ტრიპტიქი)")
         col_a, col_b = st.columns([1, 1])
         with col_a:
             st.text_area("გენერირებული ტექსტი", st.session_state['gen_text'], height=400)
         with col_b:
-            st.image(st.session_state['gen_image'], caption="🚪 ვარიანტები: A (ზევით), B (შუაში), C (ქვემოთ)", use_column_width=True)
+            st.image(st.session_state['gen_image'], caption="🚪 ვარიანტები: A | B | C", use_column_width=True)
 
 with tab2: st.info("🚧 დისტრიბუციის მოდული მომზადებაშია...")
 with tab3: st.info("🚧 მონეტიზაციის მოდული მომზადებაშია...")
