@@ -5,7 +5,6 @@ from huggingface_hub import InferenceClient
 from PIL import Image, ImageDraw, ImageFont
 import io
 
-# გვერდის კონფიგურაცია
 st.set_page_config(page_title="Beyond Reality — MVP", page_icon="🏛️", layout="wide")
 
 # --- 1. მონაცემების ჩატვირთვა ---
@@ -48,66 +47,64 @@ with col3: st.metric("Template", "📄 Loaded")
 tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Director v3.0 — ჰორიზონტალური კოლაჟი)")
+    st.subheader("🔮 ტესტის გენერაცია (Director v4.0 — Unified Scene)")
     
-    # პარამეტრების არჩევა ღილაკამდე
     lang = st.selectbox("🌐 ენა", template["languages"], index=0)
-    setting = st.selectbox("🖼️ სცენა (ერთიანი ბექგრაუნდი)", template["generation"]["image_settings"])
+    setting = st.selectbox("🖼️ სცენა (ერთიანი ატმოსფერო)", template["generation"]["image_settings"])
     
     if st.button("🚀 დაიწყე გენერაცია", type="primary"):
-        with st.spinner("🤖 დირიჟორი მუშაობს: ბექგრაუნდი → 3 კარი → ჰორიზონტალური შეკერვა..."):
+        with st.spinner("🤖 დირიჟორი ქმნის ერთიან სცენას... (შეიძლება 15-20წმ დასჭირდეს)"):
             try:
                 # A. ტექსტის გენერაცია
                 model = get_best_gemini_model(secrets["GEMINI"])
                 prompt_text = template["generation"]["text_prompt"].replace("{language}", lang)
                 text_response = model.generate_content(prompt_text)
                 
-                # B. ვიზუალური გენერაცია (დირიჟორის ლოგიკა)
+                # B. ვიზუალური გენერაცია (UNIFIED PROMPT LOGIC)
                 client = InferenceClient(api_key=secrets["HF"])
                 
-                # 1. ერთიანი ბექგრაუნდი
-                bg_prompt = f"cinematic {setting} environment, foggy, mysterious atmosphere, empty ground space, cinematic lighting, 9:16"
-                bg_img = client.text_to_image(bg_prompt, model="black-forest-labs/FLUX.1-schnell")
+                # დირიჟორი ქმნის ერთ მთლიან პრომპტს, რომელიც აიძულებს AI-ს შექმნას ერთიანი სივრცე
+                unified_prompt = f"""
+                Cinematic vertical shot 9:16. A mysterious {setting} environment. 
+                Three distinct doors stand side-by-side on a unified stone path. 
+                LEFT DOOR (A): Ancient heavy wooden door with iron rings. 
+                CENTER DOOR (B): Futuristic sleek metallic door with glowing cyan vertical lines. 
+                RIGHT DOOR (C): Magical fantasy door made of blue crystal and glowing vines. 
+                Unified atmospheric fog, consistent cinematic lighting, photorealistic, 8k, highly detailed, no text.
+                """
                 
-                # 2. სამი განსხვავებული კარი
-                door_prompts = [
-                    "ancient heavy wooden door with iron rings, front view, isolated",
-                    "futuristic sleek metal door with glowing blue accents, front view, isolated",
-                    "magical crystalline door with glowing vines, front view, isolated"
-                ]
-                doors = [client.text_to_image(p, model="black-forest-labs/FLUX.1-schnell") for p in door_prompts]
+                img = client.text_to_image(
+                    prompt=unified_prompt, 
+                    model="black-forest-labs/FLUX.1-schnell",
+                    width=1080, height=1920
+                )
                 
-                # 3. ჰორიზონტალური კომპოზიცია 9:16 კანვასზე
-                W, H = 1080, 1920  # 9:16 ფორმატი
-                canvas = Image.new('RGB', (W, H), (12, 12, 18)) # მუქი საბაზისო ფერი
-                canvas.paste(bg_img.resize((W, H)), (0, 0))
-                
-                # ზომების გათვლა
-                door_w = W // 3
-                door_h = int(H * 0.55)
-                y_pos = int(H * 0.22) # კარები მოთავსდება შუაში
-                
-                for i, door in enumerate(doors):
-                    door_resized = door.resize((door_w, door_h))
-                    x_pos = i * door_w
-                    canvas.paste(door_resized, (x_pos, y_pos))
-                
-                # 4. ლეიბლების დამატება (A, B, C)
+                # C. ლეიბლების დამატება (A, B, C) - ახლა ბევრად უფრო თვალსაჩინო
+                W, H = img.size
+                canvas = img.copy()
                 draw = ImageDraw.Draw(canvas)
+                
                 try:
-                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 70)
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 80)
                 except:
                     font = ImageFont.load_default()
                     
+                # ლეიბლების პოზიციები (თითოეული კარის ქვემოთ, ცენტრში)
+                door_width = W // 3
+                y_label = int(H * 0.62) # კარების სავარაუდო ქვედა ზღვარი
+                
                 for i, label in enumerate(["A", "B", "C"]):
-                    txt_w, txt_h = draw.textlength(label, font=font), 70
-                    x = (i * door_w) + (door_w // 2) - (txt_w // 2)
-                    y = y_pos + door_h + 30
-                    draw.text((x, y), label, fill=(255, 255, 255), font=font)
+                    x = (i * door_width) + (door_width // 2)
+                    # ტექსტის ზომა
+                    bbox = draw.textbbox((0, 0), label, font=font)
+                    txt_w = bbox[2] - bbox[0]
+                    # ხატვა თეთრი ფონით კონტრასტისთვის
+                    draw.rectangle([x-40, y_label-10, x+40, y_label+90], fill=(0, 0, 0, 180))
+                    draw.text((x - txt_w//2, y_label), label, fill=(255, 255, 255), font=font)
                 
                 st.session_state['gen_text'] = text_response.text
                 st.session_state['gen_image'] = canvas
-                st.success("✅ დირიჟორმა წარმატებით ააწყო ჰორიზონტალური კომპოზიცია!")
+                st.success("✅ დირიჟორმა წარმატებით შექმნა ერთიანი სცენა!")
                 
             except Exception as e:
                 st.error(f"❌ შეცდომა: {str(e)}")
@@ -115,12 +112,12 @@ with tab1:
     # შედეგების ჩვენება
     if 'gen_text' in st.session_state:
         st.divider()
-        st.subheader("📝 შედეგები (ჰორიზონტალური ტრიპტიქი)")
+        st.subheader("📝 შედეგები (Unified 9:16)")
         col_a, col_b = st.columns([1, 1])
         with col_a:
             st.text_area("გენერირებული ტექსტი", st.session_state['gen_text'], height=400)
         with col_b:
-            st.image(st.session_state['gen_image'], caption="🚪 ვარიანტები: A | B | C", use_column_width=True)
+            st.image(st.session_state['gen_image'], caption="🚪 ვარიანტები: A (მარცხნივ) | B (ცენტრში) | C (მარჯვნივ)", use_column_width=True)
 
 with tab2: st.info("🚧 დისტრიბუციის მოდული მომზადებაშია...")
 with tab3: st.info("🚧 მონეტიზაციის მოდული მომზადებაშია...")
