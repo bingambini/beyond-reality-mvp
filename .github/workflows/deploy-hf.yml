@@ -1,1 +1,36 @@
+name: 🚀 Deploy to Hugging Face Spaces
 
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # საშუალებას გვაძლევს ხელითაც გავუშვათ
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📦 კოდის გადმოწერა
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+      
+      - name: 🔄 Hugging Face-ზე გადატანა
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: 📤 ატვირთვა Spaces-ზე
+        run: |
+          pip install "huggingface_hub[cli]"
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          # კლონირება და ატვირთვა (მხოლოდ თუ სექრეთები არსებობს)
+          if [ -n "$HF_TOKEN" ]; then
+            huggingface-cli login --token $HF_TOKEN
+            huggingface-cli upload $HF_SPACE_NAME . ./ --repo-type=space --exclude=".git"
+            echo "✅ დეპლოი წარმატებულია!"
+          else
+            echo "⚠️ HF_TOKEN არ არის დაყენებული. დეპლოი გამოტოვებულია."
+          fi
