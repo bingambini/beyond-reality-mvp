@@ -6,8 +6,7 @@
   
   "generation": {
     "text_prompt": "შექმენი მოკლე ფსიქოლოგიური ტესტი: 'რომელ კარს აირჩევდი?' 3 ვარიანტით (A, B, C). თითოეული კარი ასახავს ურთიერთობის სტილს. ტონი: საიდუმლოებითი, მაგრამ მეგობრული. ენა: {language}.",
-    "image_prompt": "cinematic mysterious door in {setting}, foggy atmosphere, soft golden light, fantasy style, vertical 9:16, no text --ar 9:16",
-    "image_settings": ["forest", "castle", "beach"],
+    "image_prompt": "cinematic composition of THREE distinct mysterious doors standing side-by-side in {setting}, foggy atmosphere, soft lighting, fantasy style, vertical 9:16, symmetrical composition, no text --ar 9:16",    "image_settings": ["forest", "castle", "beach"],
     "audio_script": "რომელ კარს აირჩევდი? A, B თუ C? გაიგე რას ამბობს შენი ქვეცნობიერი... პასუხი და პერსონალური ანალიზი → ტელეგრამი"
   },
 
