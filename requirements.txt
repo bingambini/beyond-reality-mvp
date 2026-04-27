@@ -1,23 +1,23 @@
 # UI & Web
-streamlit==1.32.0
+streamlit
 
 # Telegram Bot
-aiogram==3.3.0
+aiogram
 
 # AI & APIs
-google-generativeai==0.3.2
-groq==0.4.2
-huggingface-hub==0.20.3
+google-generativeai
+groq
+huggingface-hub
 
 # Data & Backend
-supabase==2.3.0
-python-dotenv==1.0.1
-pydantic==2.6.1
+supabase
+python-dotenv
+pydantic
 
 # Media Processing
-moviepy==1.0.3
-edge-tts==6.1.9
+moviepy
+edge-tts
 
 # Utilities
-requests==2.31.0
-aiohttp==3.9.3
+requests
+aiohttp
