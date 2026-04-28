@@ -3,7 +3,6 @@ import json
 import google.generativeai as genai
 from huggingface_hub import InferenceClient
 from PIL import Image, ImageDraw, ImageFont
-import io
 import time
 
 st.set_page_config(page_title="Beyond Reality — MVP", page_icon="🏛️", layout="wide")
@@ -23,7 +22,6 @@ def load_template():
 
 @st.cache_resource
 def get_available_models(api_key):
-    """იღებს ყველა ხელმისაწვდომ მოდელს"""
     try:
         genai.configure(api_key=api_key)
         models = genai.list_models()
@@ -38,20 +36,18 @@ def get_available_models(api_key):
                 else:
                     available.append(model_name)
         return available if available else ["gemini-pro"]
-    except Exception as e:
+    except Exception:
         return ["gemini-pro", "gemini-1.0-pro"]
 
-def generate_with_smart_fallback(api_key, prompt, max_retries_per_model=2):
-    """ჭკვიანი გენერაცია: თუ ერთ მოდელს ლიმიტი ამოეწურა, გადადის მეორეზე"""
+def generate_with_smart_fallback(api_key, prompt, max_retries=2):
     available_models = get_available_models(api_key)
-    st.info(f"🔍 ხელმისაწვდომი მოდელები: {', '.join(available_models[:3])}")
+    st.info(f" ხელმისაწვდომი მოდელები: {', '.join(available_models[:3])}")
     
     for model_name in available_models:
         try:
             st.info(f"🔄 ვცდილობ მოდელს: {model_name}")
             model = genai.GenerativeModel(model_name)
-            
-            for attempt in range(max_retries_per_model):
+            for attempt in range(max_retries):
                 try:
                     response = model.generate_content(prompt)
                     st.success(f"✅ წარმატება! გამოყენებულია: {model_name}")
@@ -59,23 +55,21 @@ def generate_with_smart_fallback(api_key, prompt, max_retries_per_model=2):
                 except Exception as e:
                     error_msg = str(e)
                     if '429' in error_msg or 'quota' in error_msg.lower():
-                        if attempt < max_retries_per_model - 1:
-                            wait_time = 10 * (attempt + 1)
-                            st.warning(f"⏳ {model_name}-ს ლიმიტი ამოიწურა. ველოდები {wait_time}წმ... (ცდა {attempt + 1}/{max_retries_per_model})")
-                            time.sleep(wait_time)
+                        if attempt < max_retries - 1:
+                            wait = 10 * (attempt + 1)
+                            st.warning(f"⏳ {model_name}-ს ლიმიტი. ველოდები {wait}წმ...")
+                            time.sleep(wait)
                         else:
-                            st.warning(f"⚠️ {model_name}-ზე ლიმიტი ამოიწურა. გადავდივარ შემდეგ მოდელზე...")
+                            st.warning(f"⚠️ {model_name} ამოიწურა. გადავდივარ შემდეგზე...")
                             break
                     elif 'not found' in error_msg.lower() or 'not supported' in error_msg.lower():
-                        st.warning(f"⚠️ {model_name} არ არის ხელმისაწვდომი. გადავდივარ შემდეგზე...")
+                        st.warning(f"⚠️ {model_name} არ არის ხელმისაწვდომი.")
                         break
                     else:
                         raise e
-        except Exception as e:
-            st.warning(f"⚠️ {model_name} ვერ ჩაიტვირთა: {str(e)}")
+        except Exception:
             continue
-    
-    raise Exception(f"❌ ყველა ხელმისაწვდომი მოდელის ლიმიტი ამოიწურა. გთხოვთ: 1) დაელოდოთ 2-3 წუთი, ან 2) დაამატოთ ახალი API გასაღები Secrets-ში")
+    raise Exception("❌ ყველა მოდელის ლიმიტი ამოიწურა. გთხოვთ დაელოდოთ ან დაამატოთ ახალი გასაღები.")
 
 secrets = load_secrets()
 template = load_template()
@@ -89,20 +83,15 @@ with col1: st.metric("Gemini API", "🟢 Active" if secrets["GEMINI"] else "🔴
 with col2: st.metric("HF API", "🟢 Active" if secrets["HF"] else "🔴 Missing")
 with col3: st.metric("Template", "📄 Loaded")
 
-tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
+tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", " დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Dynamic Format Test)")
+    st.subheader("🔮 ტესტის გენერაცია (Overlay Mode)")
     
-    # --- პარამეტრების არჩევა ---
     col_a, col_b, col_c = st.columns(3)
-    
-    with col_a:
-        lang = st.selectbox("🌐 ენა", template["languages"], index=0)
-    with col_b:
-        setting = st.selectbox("🖼️ სცენა (ფონი)", template["generation"]["image_settings"])
+    with col_a: lang = st.selectbox("🌐 ენა", template["languages"], index=0)
+    with col_b: setting = st.selectbox("🖼️ სცენა", template["generation"]["image_settings"])
     with col_c:
-        # ახალი პარამეტრი: ფორმატი
         format_choice = st.selectbox("📐 ფორმატი", [
             "9:16 (Vertical / TikTok)", 
             "16:9 (Horizontal / YouTube)", 
@@ -110,7 +99,7 @@ with tab1:
         ], index=0)
     
     if st.button("🚀 დაიწყე გენერაცია", type="primary"):
-        with st.spinner("🤖 დირიჟორი ამუშავებს ლოგიკას..."):
+        with st.spinner("🤖 დირიორი ამუშავებს ლოგიკას..."):
             try:
                 if not secrets["GEMINI"]:
                     st.error("❌ GEMINI_API_KEY არ არის დაყენებული!")
@@ -122,69 +111,61 @@ with tab1:
                 st.info("📝 ტექსტის გენერაცია...")
                 text_response = generate_with_smart_fallback(secrets["GEMINI"], prompt_text)
                 
-                # --- B. დირიჟორის ლოგიკა (ფორმატის არჩევანი) ---
-                # დირიჟორი განსაზღვრავს ზომებს არჩეული ფორმატის მიხედვით
-                format_config = {
-                    "9:16 (Vertical / TikTok)": {"w": 1080, "h": 1920, "ratio_desc": "vertical 9:16", "img_ratio": 0.75},
-                    "16:9 (Horizontal / YouTube)": {"w": 1920, "h": 1080, "ratio_desc": "horizontal 16:9", "img_ratio": 0.80},
-                    "1:1 (Square / Instagram)": {"w": 1080, "h": 1080, "ratio_desc": "square 1:1", "img_ratio": 0.75}
+                # --- ფორმატის კონფიგურაცია ---
+                fmt = {
+                    "9:16 (Vertical / TikTok)": {"w": 1080, "h": 1920, "desc": "vertical 9:16"},
+                    "16:9 (Horizontal / YouTube)": {"w": 1920, "h": 1080, "desc": "horizontal 16:9"},
+                    "1:1 (Square / Instagram)": {"w": 1080, "h": 1080, "desc": "square 1:1"}
                 }
+                cfg = fmt[format_choice]
+                W, H = cfg["w"], cfg["h"]
                 
-                config = format_config[format_choice]
-                FINAL_W, FINAL_H = config["w"], config["h"]
-                IMAGE_H = int(FINAL_H * config["img_ratio"])
-                
-                # დირიჟორი ადგენს პრომპტს ფორმატის შესაბამისად
+                # პრომპტი ფორმატის შესაბამისად
                 ai_prompt = f"""
-                Cinematic {config['ratio_desc']} shot. 
+                Cinematic {cfg['desc']} shot. 
                 Three distinct doors standing side-by-side in a {setting}. 
                 LEFT: Ancient wooden door. CENTER: Futuristic metal door with blue neon. RIGHT: Magical crystal door.
-                Composition: Doors should be centered. High detail, 8k.
+                Composition: Doors centered, high detail, 8k, photorealistic.
                 """
                 
                 client = InferenceClient(api_key=secrets["HF"])
-                st.info(f"🎨 სურათის გენერაცია ({FINAL_W}x{FINAL_H})...")
-                img = client.text_to_image(
-                    prompt=ai_prompt,
-                    model="black-forest-labs/FLUX.1-schnell",
-                    width=FINAL_W,
-                    height=IMAGE_H
-                )
+                st.info(f"🎨 სურათის გენერაცია ({W}x{H})...")
+                img = client.text_to_image(prompt=ai_prompt, model="black-forest-labs/FLUX.1-schnell", width=W, height=H)
                 
-                # --- C. კომპოზიცია + დიდი ლეიბლები ---
-                canvas = Image.new('RGB', (FINAL_W, FINAL_H), color=(10, 10, 12))
-                canvas.paste(img, (0, 0))
-                
+                # --- ლეიბლების დადება (Overlay Logic) ---
+                canvas = img.copy()
                 draw = ImageDraw.Draw(canvas)
-                # შრიფტის ზომის ადაპტაცია ფორმატზე
-                FONT_SIZE = 180 if FINAL_H > 1500 else 120 
+                
+                # დინამიური ზომები ფორმატის მიხედვით
+                box_size = int(W * 0.11)  # ლეიბლის ზომა სიგანის 11%
+                font_size = int(box_size * 0.65)
+                y_pos = int(H * 0.78)     # პოზიცია სიმაღლის 78%-ზე (კარების ძირთან)
+                
                 try:
-                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
                 except:
                     font = ImageFont.load_default()
                 
-                door_width = FINAL_W // 3
-                y_start = IMAGE_H + 40
-                box_h = 180 if FINAL_H > 1500 else 120
-                box_w = 150 if FINAL_H > 1500 else 100
-                
+                door_w = W // 3
                 for i, label in enumerate(["A", "B", "C"]):
-                    x_center = (i * door_width) + (door_width // 2)
-                    x_left = x_center - box_w // 2
-                    y_top = y_start
+                    cx = (i * door_w) + (door_w // 2)
+                    x1 = cx - box_size // 2
+                    y1 = y_pos
+                    x2 = x1 + box_size
+                    y2 = y1 + box_size
                     
-                    # ფონი + ჩარჩო
-                    draw.rectangle([x_left, y_top, x_left + box_w, y_top + box_h], fill=(25, 25, 25), outline=(255, 255, 255), width=4)
+                    # 1. ფონი + ჩარჩო (ზედა ფენა)
+                    draw.rectangle([x1, y1, x2, y2], fill=(15, 15, 15), outline=(255, 255, 255), width=3)
                     
-                    # ტექსტი
+                    # 2. ტექსტი ცენტრში
                     bbox = draw.textbbox((0, 0), label, font=font)
-                    txt_w = bbox[2] - bbox[0]
-                    txt_h = bbox[3] - bbox[1]
-                    draw.text((x_center - txt_w//2, y_top + (box_h - txt_h)//2 - 10), label, fill=(255, 255, 255), font=font)
+                    tw = bbox[2] - bbox[0]
+                    th = bbox[3] - bbox[1]
+                    draw.text((cx - tw//2, y1 + (box_size - th)//2 - 2), label, fill=(255, 255, 255), font=font)
                 
                 st.session_state['gen_text'] = text_response.text
                 st.session_state['gen_image'] = canvas
-                st.success(f"✅ წარმატებით დაგენერირდა {config['ratio_desc']} ფორმატში!")
+                st.success(f"✅ წარმატებით! ({cfg['desc']} + Overlay)")
                 
             except Exception as e:
                 st.error(f"❌ შეცდომა: {str(e)}")
@@ -193,12 +174,11 @@ with tab1:
     if 'gen_text' in st.session_state:
         st.divider()
         st.subheader(f"📝 შედეგები ({format_choice})")
+        st.text_area("📜 ტექსტი", st.session_state['gen_text'], height=120)
         
-        st.text_area("📜 გენერირებული ტექსტი", st.session_state['gen_text'], height=150)
-        
-        col_margin, col_main, col_margin = st.columns([0.1, 1, 0.1])
-        with col_main:
-            st.image(st.session_state['gen_image'], caption="🚪 A | B | C", use_column_width=True)
+        col_m, col_c, col_m = st.columns([0.1, 1, 0.1])
+        with col_c:
+            st.image(st.session_state['gen_image'], caption=" A | B | C (Overlay)", use_column_width=True)
 
-with tab2: st.info("🚧 დისტრიბუციის მოდული მომზადებაშია...")
+with tab2: st.info(" დისტრიბუციის მოდული მომზადებაშია...")
 with tab3: st.info("🚧 მონეტიზაციის მოდული მომზადებაშია...")
