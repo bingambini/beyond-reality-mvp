@@ -47,64 +47,77 @@ with col3: st.metric("Template", "📄 Loaded")
 tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Director v4.0 — Unified Scene)")
+    st.subheader("🔮 ტესტის გენერაცია (Director v5.0 — Safe Zone Logic)")
     
     lang = st.selectbox("🌐 ენა", template["languages"], index=0)
-    setting = st.selectbox("🖼️ სცენა (ერთიანი ატმოსფერო)", template["generation"]["image_settings"])
+    setting = st.selectbox("🖼️ სცენა", template["generation"]["image_settings"])
     
-    if st.button("🚀 დაიწყე გენერაცია", type="primary"):
-        with st.spinner("🤖 დირიჟორი ქმნის ერთიან სცენას... (შეიძლება 15-20წმ დასჭირდეს)"):
+    if st.button("🚀 დაიწყე გენერაცია (Safe Zone)", type="primary"):
+        with st.spinner("🤖 დირიჟორი ზომავს სივრცეს და ქმნის კომპოზიციას..."):
             try:
-                # A. ტექსტის გენერაცია
+                # --- A. ტექსტის გენერაცია ---
                 model = get_best_gemini_model(secrets["GEMINI"])
                 prompt_text = template["generation"]["text_prompt"].replace("{language}", lang)
                 text_response = model.generate_content(prompt_text)
                 
-                # B. ვიზუალური გენერაცია (UNIFIED PROMPT LOGIC)
+                # --- B. ვიზუალური გენერაცია (Safe Zone Logic) ---
                 client = InferenceClient(api_key=secrets["HF"])
                 
-                # დირიჟორი ქმნის ერთ მთლიან პრომპტს, რომელიც აიძულებს AI-ს შექმნას ერთიანი სივრცე
-                unified_prompt = f"""
-                Cinematic vertical shot 9:16. A mysterious {setting} environment. 
-                Three distinct doors stand side-by-side on a unified stone path. 
-                LEFT DOOR (A): Ancient heavy wooden door with iron rings. 
-                CENTER DOOR (B): Futuristic sleek metallic door with glowing cyan vertical lines. 
-                RIGHT DOOR (C): Magical fantasy door made of blue crystal and glowing vines. 
-                Unified atmospheric fog, consistent cinematic lighting, photorealistic, 8k, highly detailed, no text.
+                # 1. განვსაზღვროთ ზომები (9:16 ფორმატი)
+                FINAL_W, FINAL_H = 1080, 1920
+                IMAGE_RATIO = 0.75 # სურათი დაიკავებს ზედა 75%-ს
+                IMAGE_H = int(FINAL_H * IMAGE_RATIO) # 1440px
+                
+                # 2. "ჭკვიანი პრომპტი" - ვთხოვთ AI-ს ფოკუსირდეს ზედა ნაწილზე
+                # ჩვენ ვიცით, რომ ქვედა ნაწილი ჩვენს კოდში იქნება შავი.
+                ai_prompt = f"""
+                Cinematic vertical shot, 3:4 aspect ratio. 
+                Three distinct doors standing side-by-side in a {setting}. 
+                LEFT: Ancient wooden door. CENTER: Futuristic metal door with blue neon. RIGHT: Magical crystal door.
+                Composition: Doors should be centered. High detail, 8k.
                 """
                 
+                # ვითხოვთ სურათს ზუსტად იმ ზომით, რაც ზედა ნაწილისთვის გვჭირდება
                 img = client.text_to_image(
-                    prompt=unified_prompt, 
+                    prompt=ai_prompt, 
                     model="black-forest-labs/FLUX.1-schnell",
-                    width=1080, height=1920
+                    width=FINAL_W, 
+                    height=IMAGE_H 
                 )
                 
-                # C. ლეიბლების დამატება (A, B, C) - ახლა ბევრად უფრო თვალსაჩინო
-                W, H = img.size
-                canvas = img.copy()
-                draw = ImageDraw.Draw(canvas)
+                # --- C. კომპოზიცია (კოდით) ---
+                # 1. ვქმნით სუფთა შავ კანვასს (სრული 9:16)
+                canvas = Image.new('RGB', (FINAL_W, FINAL_H), color=(10, 10, 12))
                 
+                # 2. ვაკრავთ AI-ის სურათს ზედა ნაწილში (0, 0)
+                # ეს გარანტიას გვაძლევს, რომ ქვედა 25% დარჩება სუფთა შავი
+                canvas.paste(img, (0, 0))
+                
+                # 3. ვხატავთ ლეიბლებს (A, B, C) ქვედა ნაწილში (უსაფრთხო ზონაში)
+                draw = ImageDraw.Draw(canvas)
                 try:
-                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 80)
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 90)
                 except:
                     font = ImageFont.load_default()
-                    
-                # ლეიბლების პოზიციები (თითოეული კარის ქვემოთ, ცენტრში)
-                door_width = W // 3
-                y_label = int(H * 0.62) # კარების სავარაუდო ქვედა ზღვარი
+                
+                door_width = FINAL_W // 3
+                # ლეიბლების Y პოზიცია: სურათის ბოლოდან ცოტა ქვემოთ
+                y_label = IMAGE_H + 50 
                 
                 for i, label in enumerate(["A", "B", "C"]):
                     x = (i * door_width) + (door_width // 2)
-                    # ტექსტის ზომა
+                    # ტექსტის ზომის გაზომვა ცენტრირებისთვის
                     bbox = draw.textbbox((0, 0), label, font=font)
                     txt_w = bbox[2] - bbox[0]
-                    # ხატვა თეთრი ფონით კონტრასტისთვის
-                    draw.rectangle([x-40, y_label-10, x+40, y_label+90], fill=(0, 0, 0, 180))
+                    
+                    # ვხატავთ თეთრ ასოს
                     draw.text((x - txt_w//2, y_label), label, fill=(255, 255, 255), font=font)
+                    # ვამატებთ პატარა ხაზს ან წერტილს ვიზუალური გამყოფისთვის
+                    draw.ellipse([x-5, y_label+100, x+5, y_label+110], fill=(50, 50, 50))
                 
                 st.session_state['gen_text'] = text_response.text
                 st.session_state['gen_image'] = canvas
-                st.success("✅ დირიჟორმა წარმატებით შექმნა ერთიანი სცენა!")
+                st.success("✅ დირიჟორმა ზუსტად დაყო სივრცე!")
                 
             except Exception as e:
                 st.error(f"❌ შეცდომა: {str(e)}")
@@ -112,12 +125,12 @@ with tab1:
     # შედეგების ჩვენება
     if 'gen_text' in st.session_state:
         st.divider()
-        st.subheader("📝 შედეგები (Unified 9:16)")
+        st.subheader("📝 შედეგები (Safe Zone Composition)")
         col_a, col_b = st.columns([1, 1])
         with col_a:
             st.text_area("გენერირებული ტექსტი", st.session_state['gen_text'], height=400)
         with col_b:
-            st.image(st.session_state['gen_image'], caption="🚪 ვარიანტები: A (მარცხნივ) | B (ცენტრში) | C (მარჯვნივ)", use_column_width=True)
+            st.image(st.session_state['gen_image'], caption="🚪 ზედა ნაწილი: სურათი | ქვედა ნაწილი: ლეიბლები", use_column_width=True)
 
 with tab2: st.info("🚧 დისტრიბუციის მოდული მომზადებაშია...")
 with tab3: st.info("🚧 მონეტიზაციის მოდული მომზადებაშია...")
