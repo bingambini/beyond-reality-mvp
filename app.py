@@ -31,16 +31,14 @@ def get_available_models(api_key):
         for model in models:
             if 'generateContent' in model.supported_generation_methods:
                 model_name = model.name.replace("models/", "")
-                # პრიორიტეტი: flash > pro > 1.0
                 if 'flash' in model_name:
-                    available.insert(0, model_name)  # flash პირველი
+                    available.insert(0, model_name)
                 elif 'pro' in model_name:
                     available.append(model_name)
                 else:
                     available.append(model_name)
         return available if available else ["gemini-pro"]
     except Exception as e:
-        st.error(f"⚠️ მოდელების ჩამონათვალის მიღება ვერ მოხერხდა: {str(e)}")
         return ["gemini-pro", "gemini-1.0-pro"]
 
 def generate_with_smart_fallback(api_key, prompt, max_retries_per_model=2):
@@ -52,7 +50,7 @@ def generate_with_smart_fallback(api_key, prompt, max_retries_per_model=2):
     
     for model_name in available_models:
         try:
-            st.info(f" ვცდილობ მოდელს: {model_name}")
+            st.info(f"🔄 ვცდილობ მოდელს: {model_name}")
             model = genai.GenerativeModel(model_name)
             
             for attempt in range(max_retries_per_model):
@@ -65,25 +63,22 @@ def generate_with_smart_fallback(api_key, prompt, max_retries_per_model=2):
                     if '429' in error_msg or 'quota' in error_msg.lower():
                         if attempt < max_retries_per_model - 1:
                             wait_time = 10 * (attempt + 1)
-                            st.warning(f" {model_name}-ს ლიმიტი ამოიწურა. ველოდები {wait_time}წმ... (ცდა {attempt + 1}/{max_retries_per_model})")
+                            st.warning(f"⏳ {model_name}-ს ლიმიტი ამოიწურა. ველოდები {wait_time}წმ... (ცდა {attempt + 1}/{max_retries_per_model})")
                             time.sleep(wait_time)
                         else:
                             st.warning(f"⚠️ {model_name}-ზე ლიმიტი ამოიწურა. გადავდივარ შემდეგ მოდელზე...")
-                            break  # გადავდივარ შემდეგ მოდელზე
+                            break
                     elif 'not found' in error_msg.lower() or 'not supported' in error_msg.lower():
                         st.warning(f"⚠️ {model_name} არ არის ხელმისაწვდომი. გადავდივარ შემდეგზე...")
                         break
                     else:
                         raise e
-            
             last_error = f"ყველა ცდა {model_name}-ზე ამოიწურა"
-            
         except Exception as e:
             st.warning(f"⚠️ {model_name} ვერ ჩაიტვირთა: {str(e)}")
             last_error = str(e)
             continue
     
-    # თუ აქ მოვედით, ყველა მოდელი ამოიწურა
     raise Exception(f"❌ ყველა ხელმისაწვდომი მოდელის ლიმიტი ამოიწურა. გთხოვთ: 1) დაელოდოთ 2-3 წუთი, ან 2) დაამატოთ ახალი API გასაღები Secrets-ში")
 
 secrets = load_secrets()
@@ -101,28 +96,26 @@ with col3: st.metric("Template", "📄 Loaded")
 tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Smart Fallback Enabled)")
+    st.subheader("🔮 ტესტის გენერაცია (Smart Fallback)")
     
     lang = st.selectbox("🌐 ენა", template["languages"], index=0)
     setting = st.selectbox("🖼️ სცენა", template["generation"]["image_settings"])
     
     if st.button("🚀 დაიწყე გენერაცია", type="primary"):
-        with st.spinner("🤖 დირიჟორი მუშაობს (ჭკვიანი მოდელის გადართვა)..."):
+        with st.spinner("🤖 დირიჟორი მუშაობს..."):
             try:
-                # --- A. ტექსტის გენერაცია (Smart Fallback-ით) ---
                 if not secrets["GEMINI"]:
-                    st.error("❌ GEMINI_API_KEY არ არის დაყენებული Secrets-ში!")
+                    st.error("❌ GEMINI_API_KEY არ არის დაყენებული!")
                     st.stop()
                 
                 genai.configure(api_key=secrets["GEMINI"])
                 prompt_text = template["generation"]["text_prompt"].replace("{language}", lang)
                 
-                st.info("📝 ტექსტის გენერაცია (ავტომატური მოდელის შერჩევა)...")
+                st.info("📝 ტექსტის გენერაცია...")
                 text_response = generate_with_smart_fallback(secrets["GEMINI"], prompt_text)
                 
-                # --- B. ვიზუალური გენერაცია (Safe Zone Logic) ---
+                # --- B. ვიზუალური გენერაცია ---
                 client = InferenceClient(api_key=secrets["HF"])
-                
                 FINAL_W, FINAL_H = 1080, 1920
                 IMAGE_RATIO = 0.75 
                 IMAGE_H = int(FINAL_H * IMAGE_RATIO) 
@@ -135,20 +128,13 @@ with tab1:
                 """
                 
                 st.info("🎨 სურათის გენერაცია...")
-                img = client.text_to_image(
-                    prompt=ai_prompt, 
-                    model="black-forest-labs/FLUX.1-schnell",
-                    width=FINAL_W, 
-                    height=IMAGE_H 
-                )
+                img = client.text_to_image(prompt=ai_prompt, model="black-forest-labs/FLUX.1-schnell", width=FINAL_W, height=IMAGE_H)
                 
                 # --- C. კომპოზიცია + დიდი ლეიბლები ---
                 canvas = Image.new('RGB', (FINAL_W, FINAL_H), color=(10, 10, 12))
                 canvas.paste(img, (0, 0))
                 
                 draw = ImageDraw.Draw(canvas)
-                
-                # შრიფტის პარამეტრები
                 FONT_SIZE = 180
                 try:
                     font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
@@ -164,11 +150,7 @@ with tab1:
                     x_center = (i * door_width) + (door_width // 2)
                     x_left = x_center - box_w // 2
                     y_top = y_start
-                    
-                    # 1. ვხატავთ ფონს + ჩარჩოს
                     draw.rectangle([x_left, y_top, x_left + box_w, y_top + box_h], fill=(25, 25, 25), outline=(255, 255, 255), width=5)
-                    
-                    # 2. ვხატავთ ტექსტს ცენტრში
                     bbox = draw.textbbox((0, 0), label, font=font)
                     txt_w = bbox[2] - bbox[0]
                     txt_h = bbox[3] - bbox[1]
@@ -176,19 +158,23 @@ with tab1:
                 
                 st.session_state['gen_text'] = text_response.text
                 st.session_state['gen_image'] = canvas
-                st.success("✅ წარმატებით დაგენერირდა! (სისტემამ ავტომატურად იპოვა ხელმისაწვდომი მოდელი)")
+                st.success("✅ წარმატებით დაგენერირდა!")
                 
             except Exception as e:
                 st.error(f"❌ შეცდომა: {str(e)}")
 
-    # შედეგების ჩვენება
+    # --- შედეგების ჩვენება (ახალი ლეიაუთი) ---
     if 'gen_text' in st.session_state:
         st.divider()
         st.subheader("📝 შედეგები (Smart Fallback)")
-        col_a, col_b = st.columns([1, 1])
-        with col_a:
-            st.text_area("გენერირებული ტექსტი", st.session_state['gen_text'], height=400)
-        with col_b:
+        
+        # 1. ტექსტი ზემოთ
+        st.text_area("📜 გენერირებული ტექსტი", st.session_state['gen_text'], height=200)
+        
+        # 2. სურათი ქვემოთ, ცენტრში და სრული სიგანით
+        # ვიყენებთ სვეტებს "მარჯინის" შესაქმნელად, რათა სურათი ვიზუალურად ცენტრში იყოს
+        col_margin, col_main, col_margin = st.columns([0.2, 1, 0.2])
+        with col_main:
             st.image(st.session_state['gen_image'], caption="🚪 A | B | C (მკაფიო და დიდი)", use_column_width=True)
 
 with tab2: st.info("🚧 დისტრიბუციის მოდული მომზადებაშია...")
