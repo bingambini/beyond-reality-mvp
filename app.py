@@ -15,7 +15,6 @@ class Agent:
     def __init__(self, name):
         self.name = name
         self.status = "idle"
-        self.last_error = None
     
     def report(self, message, level="info"):
         if level == "info": st.info(f"🤖 [{self.name}] {message}")
@@ -82,11 +81,14 @@ class ImageAgent(Agent):
     
     def generate_with_fallback(self, prompt, width, height, max_attempts=3):
         self.status = "working"
+        # დამატებული ახალი სერვისები
         services = [
             ("HuggingFace_FLUX", self._try_huggingface),
             ("Pollinations", self._try_pollinations),
-            ("DeepAI", self._try_deepai),
-            ("Placeholder", self._try_placeholder)
+            ("Lexica", self._try_lexica),
+            ("Craiyon", self._try_craiyon),
+            ("Replicate_SD", self._try_replicate),
+            ("Placeholder", self._try_placeholder)  # უკიდურესი ფოლბექი
         ]
         
         for svc_name, svc_func in services:
@@ -94,6 +96,9 @@ class ImageAgent(Agent):
                 self.report(f"მეთოდი: {svc_name}...")
                 result = svc_func(prompt, width, height, max_attempts)
                 if result:
+                    # გარანტია: სურათი ზუსტად მოცემულ ზომაში
+                    if result.size != (width, height):
+                        result = result.resize((width, height), Image.LANCZOS)
                     self.report(f"წარმატება! ({svc_name})", "success")
                     self.status = "done"
                     return result
@@ -127,27 +132,27 @@ class ImageAgent(Agent):
                     img = Image.open(io.BytesIO(resp.content))
                     return img.convert('RGB') if img.mode == 'RGBA' else img
                 elif resp.status_code == 404:
-                    time.sleep(5)  # ცოტა ხანი დაველოდოთ
+                    time.sleep(5)
                     continue
                 else: raise Exception(f"Status {resp.status_code}")
             except: 
                 if attempt == max_r - 1: raise
                 time.sleep(5)
     
-    def _try_deepai(self, prompt, w, h, max_r):
-        # DeepAI free API (no key required for basic usage)
+    def _try_lexica(self, prompt, w, h, max_r):
+        # Lexica.art API (უფასო ტიერი)
         for attempt in range(max_r):
             try:
-                resp = requests.post(
-                    "https://api.deepai.org/api/text2img",
-                    data={'text': prompt[:500]},  # limit prompt length
-                    headers={'api-key': 'free-key-placeholder'},  # DeepAI accepts any key for free tier
-                    timeout=45
+                # Lexica-ს აქვს სხვა ფორმატი, ამიტომ ვიყენებთ მათ public API-ს
+                resp = requests.get(
+                    f"https://lexica.art/api/v1/search?q={requests.utils.quote(prompt[:100])}",
+                    timeout=30
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    img_url = data.get('output_url')
-                    if img_url:
+                    if data.get('images'):
+                        # ვიღებთ პირველ სურათს და ვრესაიზებთ
+                        img_url = data['images'][0]['url']
                         img_resp = requests.get(img_url, timeout=30)
                         img = Image.open(io.BytesIO(img_resp.content))
                         return img.convert('RGB').resize((w, h))
@@ -156,16 +161,58 @@ class ImageAgent(Agent):
                 if attempt == max_r - 1: raise
                 time.sleep(3)
     
+    def _try_craiyon(self, prompt, w, h, max_r):
+        # Craiyon (formerly DALL-E Mini) - უფასო, no API key
+        for attempt in range(max_r):
+            try:
+                resp = requests.post(
+                    "https://api.craiyon.com/v3",
+                    json={"prompt": prompt[:200], "negative_prompt": "", "aspect_ratio": "square" if w==h else "portrait" if h>w else "landscape"},
+                    timeout=90  # Craiyon ნელია
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get('images'):
+                        # Craiyon აბრუნებს base64
+                        import base64
+                        img_data = base64.b64decode(data['images'][0])
+                        img = Image.open(io.BytesIO(img_data))
+                        return img.convert('RGB').resize((w, h))
+                time.sleep(5)
+            except: 
+                if attempt == max_r - 1: raise
+                time.sleep(5)
+    
+    def _try_replicate(self, prompt, w, h, max_r):
+        # Replicate Stable Diffusion (თუ ხელმისაწვდომია უფასოდ)
+        # შენიშვნა: Replicate-ს სჭირდება API key, ამიტომ ეს მეთოდი მხოლოდ მაშინ იმუშავებს თუ user-ს აქვს key
+        # ამიტომ, ამ ეტაპზე ვაბრუნებთ None-ს, რომ გადავიდეს შემდეგზე
+        raise Exception("Replicate requires API key - skipping")
+    
     def _try_placeholder(self, prompt, w, h, max_r):
-        # უკიდურესი ფოლბექი: ქმნის სურათს ტექსტით
-        img = Image.new('RGB', (w, h), color=(30, 30, 50))
-        draw = ImageDraw.Draw(img)
-        try: font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
-        except: font = ImageFont.load_default()
+        # უკიდურესი ფოლბექი: ქმნის ფერად სურათს ტექსტით
+        self.report("უკიდურესი ფოლბექი: Placeholder-ის შექმნა...", "warning")
+        # ფერადი გრადიენტი ფონი
+        img = Image.new('RGB', (w, h))
+        for y in range(h):
+            r = int(30 + (y/h) * 40)
+            g = int(30 + (y/h) * 20)
+            b = int(50 + (y/h) * 30)
+            for x in range(w):
+                img.putpixel((x, y), (r, g, b))
         
-        # წერს პრომპტის შეჯამებას
-        short_prompt = prompt[:100] + "..." if len(prompt) > 100 else prompt
-        draw.text((w//2, h//2), "🚪 Image Placeholder\n" + short_prompt, fill=(200,200,200), font=font, anchor="mm")
+        draw = ImageDraw.Draw(img)
+        try: 
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", min(w, h)//8)
+        except: 
+            font = ImageFont.load_default()
+        
+        short_prompt = prompt[:80] + "..." if len(prompt) > 80 else prompt
+        # ცენტრში ტექსტი
+        bbox = draw.textbbox((0,0), short_prompt, font=font)
+        tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+        draw.text((w//2 - tw//2, h//2 - th//2), short_prompt, fill=(255,255,255), font=font)
+        draw.text((w//2 - 50, h-100), "🚪 [Placeholder Image]", fill=(200,200,200), font=font)
         return img
 
 # ==================== LABEL AGENT ====================
@@ -175,24 +222,48 @@ class LabelAgent(Agent):
     
     def apply(self, image, width, height, labels=["A","B","C"]):
         self.status = "working"
-        canvas = image.copy()
-        draw = ImageDraw.Draw(canvas)
-        
-        font_size = int(width * 0.70)
-        y_pos = int(height * 0.70)
-        
-        try: font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-        except: font = ImageFont.load_default()
-        
-        door_w = width // 3
-        for i, label in enumerate(labels):
-            cx = (i * door_w) + (door_w // 2)
-            bbox = draw.textbbox((0, 0), label, font=font)
-            tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-            draw.text((cx-tw//2, y_pos-th//2), label, fill=(255,255,255), font=font, stroke_width=25, stroke_fill=(0,0,0))
-        
-        self.status = "done"
-        return canvas
+        try:
+            # გარანტია: სურათი ზუსტად მოცემულ ზომაში
+            if image.size != (width, height):
+                image = image.resize((width, height), Image.LANCZOS)
+            
+            canvas = image.copy()
+            draw = ImageDraw.Draw(canvas)
+            
+            # ფიქსირებული პარამეტრები (უფრო უსაფრთხო)
+            font_size = int(width * 0.25)  # 25% სიგანიდან (ადრე იყო 70% - ზედმეტად დიდი)
+            y_pos = int(height * 0.75)      # 75% სიმაღლეზე (ქვემოთ)
+            
+            # ფონტის ჩატვირთვა
+            try: 
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+            except: 
+                self.report("DejaVu font არ მოიძებნა, ვიყენებ default-ს", "warning")
+                font = ImageFont.load_default()
+            
+            door_w = width // 3
+            for i, label in enumerate(labels):
+                cx = (i * door_w) + (door_w // 2)
+                
+                # ტექსტის ზომის გაზომვა
+                bbox = draw.textbbox((0, 0), label, font=font)
+                tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+                
+                # ხატვა: თეთრი ტექსტი + შავი კონტური
+                draw.text(
+                    (cx - tw//2, y_pos - th//2), 
+                    label, 
+                    fill=(255,255,255), 
+                    font=font, 
+                    stroke_width=12,  # ოდნავ შემცირებული
+                    stroke_fill=(0,0,0)
+                )
+            
+            self.status = "done"
+            return canvas
+        except Exception as e:
+            self.status = "failed"
+            raise Exception(f"ლეიბლების დადება ვერ მოხერხდა: {str(e)}")
 
 # ==================== DIRECTOR AGENT ====================
 class DirectorAgent(Agent):
@@ -236,17 +307,17 @@ secrets = load_secrets()
 template = load_template()
 
 st.title("🏛️ Beyond Reality — Control Panel")
-st.markdown("*AI Content Empire | Agent-Based Architecture*")
+st.markdown("*AI Content Empire | Agent-Based Architecture v1.1*")
 
 col1, col2, col3 = st.columns(3)
 with col1: st.metric("Gemini API", "🟢 Active" if secrets["GEMINI"] else "🔴 Missing")
 with col2: st.metric("HF API", "🟢 Active" if secrets["HF"] else "🔴 Missing")
-with col3: st.metric("System", "🤖 Agent-Based")
+with col3: st.metric("System", "🤖 Agent v1.1")
 
 tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Agent System v1.0)")
+    st.subheader("🔮 ტესტის გენერაცია (Agent System v1.1)")
     
     col_a, col_b, col_c = st.columns(3)
     with col_a: lang = st.selectbox("🌐 ენა", template["languages"], index=0)
@@ -291,7 +362,7 @@ with tab1:
         st.text_area("📜 ტექსტი", st.session_state['gen_text'], height=120)
         col_m, col_c, col_m = st.columns([0.1, 1, 0.1])
         with col_c:
-            st.image(st.session_state['gen_image'], caption="🚪 A | B | C", use_column_width=True)
+            st.image(st.session_state['gen_image'], caption="🚪 A | B | C (Labels Applied)", use_column_width=True)
 
 with tab2: st.info("🚧 დისტრიბუციის მოდული მომზადებაშია...")
 with tab3: st.info("🚧 მონეტიზაციის მოდული მომზადებაშია...")
