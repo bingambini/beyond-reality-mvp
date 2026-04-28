@@ -4,6 +4,7 @@ import google.generativeai as genai
 from huggingface_hub import InferenceClient
 from PIL import Image, ImageDraw, ImageFont
 import io
+import time
 
 st.set_page_config(page_title="Beyond Reality — MVP", page_icon="🏛️", layout="wide")
 
@@ -32,6 +33,24 @@ def get_best_gemini_model(api_key):
         return genai.GenerativeModel(available[0]) if available else genai.GenerativeModel("gemini-pro")
     except: return genai.GenerativeModel("gemini-pro")
 
+def generate_with_retry(model, prompt, max_retries=3):
+    """ავტომატური Retry ლოგიკა 429 შეცდომისთვის"""
+    for attempt in range(max_retries):
+        try:
+            return model.generate_content(prompt)
+        except Exception as e:
+            error_msg = str(e)
+            if '429' in error_msg or 'quota' in error_msg.lower():
+                if attempt < max_retries - 1:
+                    wait_time = 12 * (attempt + 1)  # ექსპონენციალური backoff
+                    st.warning(f" ლიმიტი ამოიწურა. ველოდები {wait_time}წმ... (ცდა {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                else:
+                    raise Exception("ლიმიტი ამოიწურა 3 ცდის შემდეგ. გთხოვთ სცადოთ 1 წუთში.")
+            else:
+                raise e
+    return None
+
 secrets = load_secrets()
 template = load_template()
 
@@ -47,18 +66,20 @@ with col3: st.metric("Template", "📄 Loaded")
 tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Director v5.1 — Large Labels)")
+    st.subheader("🔮 ტესტის გენერაცია (Auto-Retry Enabled)")
     
     lang = st.selectbox("🌐 ენა", template["languages"], index=0)
     setting = st.selectbox("🖼️ სცენა", template["generation"]["image_settings"])
     
     if st.button("🚀 დაიწყე გენერაცია", type="primary"):
-        with st.spinner("🤖 დირიჟორი ზომავს სივრცეს და ქმნის კომპოზიციას..."):
+        with st.spinner("🤖 დირიჟორი მუშაობს (ავტო-Retry ჩართულია)..."):
             try:
-                # --- A. ტექსტის გენერაცია ---
+                # --- A. ტექსტის გენერაცია (Auto-Retry-თ) ---
                 model = get_best_gemini_model(secrets["GEMINI"])
                 prompt_text = template["generation"]["text_prompt"].replace("{language}", lang)
-                text_response = model.generate_content(prompt_text)
+                
+                st.info("📝 ტექსტის გენერაცია...")
+                text_response = generate_with_retry(model, prompt_text)
                 
                 # --- B. ვიზუალური გენერაცია (Safe Zone Logic) ---
                 client = InferenceClient(api_key=secrets["HF"])
@@ -74,6 +95,7 @@ with tab1:
                 Composition: Doors should be centered. High detail, 8k.
                 """
                 
+                st.info("🎨 სურათის გენერაცია...")
                 img = client.text_to_image(
                     prompt=ai_prompt, 
                     model="black-forest-labs/FLUX.1-schnell",
@@ -95,7 +117,7 @@ with tab1:
                     font = ImageFont.load_default()
                 
                 door_width = FINAL_W // 3
-                y_start = IMAGE_H + 60  # შავი ზონის დასაწყისიდან 60px ქვემოთ
+                y_start = IMAGE_H + 60
                 box_h = 220
                 box_w = 200
                 
@@ -115,7 +137,7 @@ with tab1:
                 
                 st.session_state['gen_text'] = text_response.text
                 st.session_state['gen_image'] = canvas
-                st.success("✅ დირიჟორმა ზუსტად დაყო სივრცე + დიდი ლეიბლები!")
+                st.success("✅ წარმატებით დაგენერირდა! (ლიმიტები ავტომატურად დარეგულირდა)")
                 
             except Exception as e:
                 st.error(f"❌ შეცდომა: {str(e)}")
@@ -123,7 +145,7 @@ with tab1:
     # შედეგების ჩვენება
     if 'gen_text' in st.session_state:
         st.divider()
-        st.subheader("📝 შედეგები (Safe Zone + Large Labels)")
+        st.subheader("📝 შედეგები (Auto-Retry Enabled)")
         col_a, col_b = st.columns([1, 1])
         with col_a:
             st.text_area("გენერირებული ტექსტი", st.session_state['gen_text'], height=400)
