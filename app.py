@@ -22,34 +22,69 @@ def load_template():
         return json.load(f)
 
 @st.cache_resource
-def get_best_gemini_model(api_key):
+def get_available_models(api_key):
+    """იღებს ყველა ხელმისაწვდომ მოდელს"""
     try:
         genai.configure(api_key=api_key)
         models = genai.list_models()
-        preferred = ["gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"]
-        available = [m.name.replace("models/", "") for m in models if 'generateContent' in m.supported_generation_methods]
-        for p in preferred:
-            if p in available: return genai.GenerativeModel(p)
-        return genai.GenerativeModel(available[0]) if available else genai.GenerativeModel("gemini-pro")
-    except: return genai.GenerativeModel("gemini-pro")
-
-def generate_with_retry(model, prompt, max_retries=3):
-    """ავტომატური Retry ლოგიკა 429 შეცდომისთვის"""
-    for attempt in range(max_retries):
-        try:
-            return model.generate_content(prompt)
-        except Exception as e:
-            error_msg = str(e)
-            if '429' in error_msg or 'quota' in error_msg.lower():
-                if attempt < max_retries - 1:
-                    wait_time = 12 * (attempt + 1)  # ექსპონენციალური backoff
-                    st.warning(f" ლიმიტი ამოიწურა. ველოდები {wait_time}წმ... (ცდა {attempt + 1}/{max_retries})")
-                    time.sleep(wait_time)
+        available = []
+        for model in models:
+            if 'generateContent' in model.supported_generation_methods:
+                model_name = model.name.replace("models/", "")
+                # პრიორიტეტი: flash > pro > 1.0
+                if 'flash' in model_name:
+                    available.insert(0, model_name)  # flash პირველი
+                elif 'pro' in model_name:
+                    available.append(model_name)
                 else:
-                    raise Exception("ლიმიტი ამოიწურა 3 ცდის შემდეგ. გთხოვთ სცადოთ 1 წუთში.")
-            else:
-                raise e
-    return None
+                    available.append(model_name)
+        return available if available else ["gemini-pro"]
+    except Exception as e:
+        st.error(f"⚠️ მოდელების ჩამონათვალის მიღება ვერ მოხერხდა: {str(e)}")
+        return ["gemini-pro", "gemini-1.0-pro"]
+
+def generate_with_smart_fallback(api_key, prompt, max_retries_per_model=2):
+    """ჭკვიანი გენერაცია: თუ ერთ მოდელს ლიმიტი ამოეწურა, გადადის მეორეზე"""
+    available_models = get_available_models(api_key)
+    st.info(f"🔍 ხელმისაწვდომი მოდელები: {', '.join(available_models[:3])}")
+    
+    last_error = None
+    
+    for model_name in available_models:
+        try:
+            st.info(f" ვცდილობ მოდელს: {model_name}")
+            model = genai.GenerativeModel(model_name)
+            
+            for attempt in range(max_retries_per_model):
+                try:
+                    response = model.generate_content(prompt)
+                    st.success(f"✅ წარმატება! გამოყენებულია: {model_name}")
+                    return response
+                except Exception as e:
+                    error_msg = str(e)
+                    if '429' in error_msg or 'quota' in error_msg.lower():
+                        if attempt < max_retries_per_model - 1:
+                            wait_time = 10 * (attempt + 1)
+                            st.warning(f" {model_name}-ს ლიმიტი ამოიწურა. ველოდები {wait_time}წმ... (ცდა {attempt + 1}/{max_retries_per_model})")
+                            time.sleep(wait_time)
+                        else:
+                            st.warning(f"⚠️ {model_name}-ზე ლიმიტი ამოიწურა. გადავდივარ შემდეგ მოდელზე...")
+                            break  # გადავდივარ შემდეგ მოდელზე
+                    elif 'not found' in error_msg.lower() or 'not supported' in error_msg.lower():
+                        st.warning(f"⚠️ {model_name} არ არის ხელმისაწვდომი. გადავდივარ შემდეგზე...")
+                        break
+                    else:
+                        raise e
+            
+            last_error = f"ყველა ცდა {model_name}-ზე ამოიწურა"
+            
+        except Exception as e:
+            st.warning(f"⚠️ {model_name} ვერ ჩაიტვირთა: {str(e)}")
+            last_error = str(e)
+            continue
+    
+    # თუ აქ მოვედით, ყველა მოდელი ამოიწურა
+    raise Exception(f"❌ ყველა ხელმისაწვდომი მოდელის ლიმიტი ამოიწურა. გთხოვთ: 1) დაელოდოთ 2-3 წუთი, ან 2) დაამატოთ ახალი API გასაღები Secrets-ში")
 
 secrets = load_secrets()
 template = load_template()
@@ -66,20 +101,24 @@ with col3: st.metric("Template", "📄 Loaded")
 tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Auto-Retry Enabled)")
+    st.subheader("🔮 ტესტის გენერაცია (Smart Fallback Enabled)")
     
     lang = st.selectbox("🌐 ენა", template["languages"], index=0)
     setting = st.selectbox("🖼️ სცენა", template["generation"]["image_settings"])
     
     if st.button("🚀 დაიწყე გენერაცია", type="primary"):
-        with st.spinner("🤖 დირიჟორი მუშაობს (ავტო-Retry ჩართულია)..."):
+        with st.spinner("🤖 დირიჟორი მუშაობს (ჭკვიანი მოდელის გადართვა)..."):
             try:
-                # --- A. ტექსტის გენერაცია (Auto-Retry-თ) ---
-                model = get_best_gemini_model(secrets["GEMINI"])
+                # --- A. ტექსტის გენერაცია (Smart Fallback-ით) ---
+                if not secrets["GEMINI"]:
+                    st.error("❌ GEMINI_API_KEY არ არის დაყენებული Secrets-ში!")
+                    st.stop()
+                
+                genai.configure(api_key=secrets["GEMINI"])
                 prompt_text = template["generation"]["text_prompt"].replace("{language}", lang)
                 
-                st.info("📝 ტექსტის გენერაცია...")
-                text_response = generate_with_retry(model, prompt_text)
+                st.info("📝 ტექსტის გენერაცია (ავტომატური მოდელის შერჩევა)...")
+                text_response = generate_with_smart_fallback(secrets["GEMINI"], prompt_text)
                 
                 # --- B. ვიზუალური გენერაცია (Safe Zone Logic) ---
                 client = InferenceClient(api_key=secrets["HF"])
@@ -137,7 +176,7 @@ with tab1:
                 
                 st.session_state['gen_text'] = text_response.text
                 st.session_state['gen_image'] = canvas
-                st.success("✅ წარმატებით დაგენერირდა! (ლიმიტები ავტომატურად დარეგულირდა)")
+                st.success("✅ წარმატებით დაგენერირდა! (სისტემამ ავტომატურად იპოვა ხელმისაწვდომი მოდელი)")
                 
             except Exception as e:
                 st.error(f"❌ შეცდომა: {str(e)}")
@@ -145,7 +184,7 @@ with tab1:
     # შედეგების ჩვენება
     if 'gen_text' in st.session_state:
         st.divider()
-        st.subheader("📝 შედეგები (Auto-Retry Enabled)")
+        st.subheader("📝 შედეგები (Smart Fallback)")
         col_a, col_b = st.columns([1, 1])
         with col_a:
             st.text_area("გენერირებული ტექსტი", st.session_state['gen_text'], height=400)
