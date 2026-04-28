@@ -29,12 +29,9 @@ def get_available_models(api_key):
         for model in models:
             if 'generateContent' in model.supported_generation_methods:
                 model_name = model.name.replace("models/", "")
-                if 'flash' in model_name:
-                    available.insert(0, model_name)
-                elif 'pro' in model_name:
-                    available.append(model_name)
-                else:
-                    available.append(model_name)
+                if 'flash' in model_name: available.insert(0, model_name)
+                elif 'pro' in model_name: available.append(model_name)
+                else: available.append(model_name)
         return available if available else ["gemini-pro"]
     except Exception:
         return ["gemini-pro", "gemini-1.0-pro"]
@@ -65,11 +62,9 @@ def generate_with_smart_fallback(api_key, prompt, max_retries=2):
                     elif 'not found' in error_msg.lower() or 'not supported' in error_msg.lower():
                         st.warning(f"⚠️ {model_name} არ არის ხელმისაწვდომი.")
                         break
-                    else:
-                        raise e
-        except Exception:
-            continue
-    raise Exception("❌ ყველა მოდელის ლიმიტი ამოიწურა. გთხოვთ დაელოდოთ ან დაამატოთ ახალი გასაღები.")
+                    else: raise e
+        except Exception: continue
+    raise Exception(" ყველა მოდელის ლიმიტი ამოიწურა. გთხოვთ დაელოდოთ ან დაამატოთ ახალი გასაღები.")
 
 secrets = load_secrets()
 template = load_template()
@@ -83,14 +78,14 @@ with col1: st.metric("Gemini API", "🟢 Active" if secrets["GEMINI"] else "🔴
 with col2: st.metric("HF API", "🟢 Active" if secrets["HF"] else "🔴 Missing")
 with col3: st.metric("Template", "📄 Loaded")
 
-tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", " დისტრიბუცია", "💰 მონეტიზაცია"])
+tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Overlay Mode)")
+    st.subheader("🔮 ტესტის გენერაცია (Director v7.0 — Full Frame Overlay)")
     
     col_a, col_b, col_c = st.columns(3)
     with col_a: lang = st.selectbox("🌐 ენა", template["languages"], index=0)
-    with col_b: setting = st.selectbox("🖼️ სცენა", template["generation"]["image_settings"])
+    with col_b: setting = st.selectbox("️ სცენა", template["generation"]["image_settings"])
     with col_c:
         format_choice = st.selectbox("📐 ფორმატი", [
             "9:16 (Vertical / TikTok)", 
@@ -99,7 +94,7 @@ with tab1:
         ], index=0)
     
     if st.button("🚀 დაიწყე გენერაცია", type="primary"):
-        with st.spinner("🤖 დირიორი ამუშავებს ლოგიკას..."):
+        with st.spinner("🤖 დირიჟორი ამუშავებს ლოგიკას..."):
             try:
                 if not secrets["GEMINI"]:
                     st.error("❌ GEMINI_API_KEY არ არის დაყენებული!")
@@ -120,26 +115,28 @@ with tab1:
                 cfg = fmt[format_choice]
                 W, H = cfg["w"], cfg["h"]
                 
-                # პრომპტი ფორმატის შესაბამისად
+                # პრომპტი: ვთხოვთ AI-ს შეავსოს მთელი კადრი (არ დატოვოს ცარიელი ადგილი)
                 ai_prompt = f"""
                 Cinematic {cfg['desc']} shot. 
                 Three distinct doors standing side-by-side in a {setting}. 
                 LEFT: Ancient wooden door. CENTER: Futuristic metal door with blue neon. RIGHT: Magical crystal door.
-                Composition: Doors centered, high detail, 8k, photorealistic.
+                Composition: Doors centered, high detail, 8k, photorealistic. 
+                IMPORTANT: Fill the entire frame, detailed ground/floor, no empty space, no black borders.
                 """
                 
                 client = InferenceClient(api_key=secrets["HF"])
                 st.info(f"🎨 სურათის გენერაცია ({W}x{H})...")
                 img = client.text_to_image(prompt=ai_prompt, model="black-forest-labs/FLUX.1-schnell", width=W, height=H)
                 
-                # --- ლეიბლების დადება (Overlay Logic) ---
+                # --- ლეიბლების დადება (Overlay Logic - ზედა ფენა) ---
+                # ვიყენებთ img.copy()-ს, რათა შავი ზონა არ შეიქმნას!
                 canvas = img.copy()
                 draw = ImageDraw.Draw(canvas)
                 
                 # დინამიური ზომები ფორმატის მიხედვით
-                box_size = int(W * 0.11)  # ლეიბლის ზომა სიგანის 11%
-                font_size = int(box_size * 0.65)
-                y_pos = int(H * 0.78)     # პოზიცია სიმაღლის 78%-ზე (კარების ძირთან)
+                box_size = int(W * 0.10)  # ლეიბლის ზომა სიგანის 10%
+                font_size = int(box_size * 0.60)
+                y_pos = int(H * 0.82)     # პოზიცია სიმაღლის 82%-ზე (კარების ძირთან)
                 
                 try:
                     font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
@@ -155,7 +152,8 @@ with tab1:
                     y2 = y1 + box_size
                     
                     # 1. ფონი + ჩარჩო (ზედა ფენა)
-                    draw.rectangle([x1, y1, x2, y2], fill=(15, 15, 15), outline=(255, 255, 255), width=3)
+                    # მუქი ნაცრისფერი ფონი + თეთრი ჩარჩო კონტრასტისთვის
+                    draw.rectangle([x1, y1, x2, y2], fill=(20, 20, 20), outline=(255, 255, 255), width=3)
                     
                     # 2. ტექსტი ცენტრში
                     bbox = draw.textbbox((0, 0), label, font=font)
@@ -165,7 +163,7 @@ with tab1:
                 
                 st.session_state['gen_text'] = text_response.text
                 st.session_state['gen_image'] = canvas
-                st.success(f"✅ წარმატებით! ({cfg['desc']} + Overlay)")
+                st.success(f"✅ წარმატებით! ({cfg['desc']} + Full Frame Overlay)")
                 
             except Exception as e:
                 st.error(f"❌ შეცდომა: {str(e)}")
@@ -180,5 +178,5 @@ with tab1:
         with col_c:
             st.image(st.session_state['gen_image'], caption=" A | B | C (Overlay)", use_column_width=True)
 
-with tab2: st.info(" დისტრიბუციის მოდული მომზადებაშია...")
+with tab2: st.info("🚧 დისტრიბუციის მოდული მომზადებაშია...")
 with tab3: st.info("🚧 მონეტიზაციის მოდული მომზადებაშია...")
