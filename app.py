@@ -78,16 +78,16 @@ with col1: st.metric("Gemini API", "🟢 Active" if secrets["GEMINI"] else "🔴
 with col2: st.metric("HF API", "🟢 Active" if secrets["HF"] else "🔴 Missing")
 with col3: st.metric("Template", "📄 Loaded")
 
-tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
+tab1, tab2, tab3 = st.tabs(["️ გენერაცია", " დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Director v7.0 — Full Frame Overlay)")
+    st.subheader(" ტესტის გენერაცია (Director v8.0 — Pure Text Overlay)")
     
     col_a, col_b, col_c = st.columns(3)
     with col_a: lang = st.selectbox("🌐 ენა", template["languages"], index=0)
     with col_b: setting = st.selectbox("️ სცენა", template["generation"]["image_settings"])
     with col_c:
-        format_choice = st.selectbox("📐 ფორმატი", [
+        format_choice = st.selectbox(" ფორმატი", [
             "9:16 (Vertical / TikTok)", 
             "16:9 (Horizontal / YouTube)", 
             "1:1 (Square / Instagram)"
@@ -115,28 +115,26 @@ with tab1:
                 cfg = fmt[format_choice]
                 W, H = cfg["w"], cfg["h"]
                 
-                # პრომპტი: ვთხოვთ AI-ს შეავსოს მთელი კადრი (არ დატოვოს ცარიელი ადგილი)
+                # პრომპტი: ვთხოვთ AI-ს შეავსოს მთელი კადრი
                 ai_prompt = f"""
                 Cinematic {cfg['desc']} shot. 
                 Three distinct doors standing side-by-side in a {setting}. 
                 LEFT: Ancient wooden door. CENTER: Futuristic metal door with blue neon. RIGHT: Magical crystal door.
                 Composition: Doors centered, high detail, 8k, photorealistic. 
-                IMPORTANT: Fill the entire frame, detailed ground/floor, no empty space, no black borders.
+                IMPORTANT: Fill the entire frame, detailed ground/floor, no empty space.
                 """
                 
                 client = InferenceClient(api_key=secrets["HF"])
                 st.info(f"🎨 სურათის გენერაცია ({W}x{H})...")
                 img = client.text_to_image(prompt=ai_prompt, model="black-forest-labs/FLUX.1-schnell", width=W, height=H)
                 
-                # --- ლეიბლების დადება (Overlay Logic - ზედა ფენა) ---
-                # ვიყენებთ img.copy()-ს, რათა შავი ზონა არ შეიქმნას!
+                # --- ლეიბლების დადება (Pure Text Overlay) ---
                 canvas = img.copy()
                 draw = ImageDraw.Draw(canvas)
                 
-                # დინამიური ზომები ფორმატის მიხედვით
-                box_size = int(W * 0.10)  # ლეიბლის ზომა სიგანის 10%
-                font_size = int(box_size * 0.60)
-                y_pos = int(H * 0.82)     # პოზიცია სიმაღლის 82%-ზე (კარების ძირთან)
+                # დინამიური ომები
+                font_size = int(W * 0.07) # შრიფტის ზომა
+                y_pos = int(H * 0.82)     # პოზიცია (კარების ძირთან)
                 
                 try:
                     font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
@@ -146,24 +144,21 @@ with tab1:
                 door_w = W // 3
                 for i, label in enumerate(["A", "B", "C"]):
                     cx = (i * door_w) + (door_w // 2)
-                    x1 = cx - box_size // 2
-                    y1 = y_pos
-                    x2 = x1 + box_size
-                    y2 = y1 + box_size
                     
-                    # 1. ფონი + ჩარჩო (ზედა ფენა)
-                    # მუქი ნაცრისფერი ფონი + თეთრი ჩარჩო კონტრასტისთვის
-                    draw.rectangle([x1, y1, x2, y2], fill=(20, 20, 20), outline=(255, 255, 255), width=3)
-                    
-                    # 2. ტექსტი ცენტრში
+                    # ტექსტის ზომის გაზომვა ცენტრირებისთვის
                     bbox = draw.textbbox((0, 0), label, font=font)
                     tw = bbox[2] - bbox[0]
                     th = bbox[3] - bbox[1]
-                    draw.text((cx - tw//2, y1 + (box_size - th)//2 - 2), label, fill=(255, 255, 255), font=font)
+                    
+                    # 1. ჩრდილი (Shadow) - რომ გამოირჩეოდეს ნებისმიერ ფონზე
+                    draw.text((cx - tw//2 + 3, y_pos - th//2 + 3), label, fill=(0, 0, 0), font=font)
+                    
+                    # 2. ძირითადი თეთრი ტექსტი
+                    draw.text((cx - tw//2, y_pos - th//2), label, fill=(255, 255, 255), font=font)
                 
                 st.session_state['gen_text'] = text_response.text
                 st.session_state['gen_image'] = canvas
-                st.success(f"✅ წარმატებით! ({cfg['desc']} + Full Frame Overlay)")
+                st.success(f"✅ წარმატებით! ({cfg['desc']} + Pure Overlay)")
                 
             except Exception as e:
                 st.error(f"❌ შეცდომა: {str(e)}")
@@ -176,7 +171,7 @@ with tab1:
         
         col_m, col_c, col_m = st.columns([0.1, 1, 0.1])
         with col_c:
-            st.image(st.session_state['gen_image'], caption=" A | B | C (Overlay)", use_column_width=True)
+            st.image(st.session_state['gen_image'], caption=" A | B | C (Pure Overlay)", use_column_width=True)
 
-with tab2: st.info("🚧 დისტრიბუციის მოდული მომზადებაშია...")
+with tab2: st.info(" დისტრიბუციის მოდული მომზადებაშია...")
 with tab3: st.info("🚧 მონეტიზაციის მოდული მომზადებაშია...")
