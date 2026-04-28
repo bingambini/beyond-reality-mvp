@@ -114,11 +114,13 @@ with tab1:
                 st.info("📝 ტექსტის გენერაცია...")
                 text_response = generate_with_smart_fallback(secrets["GEMINI"], prompt_text)
                 
-                # --- B. ვიზუალური გენერაცია ---
+                # --- B. ვიზუალური გენერაცია (Safe Zone Logic) ---
                 client = InferenceClient(api_key=secrets["HF"])
+                
+                # კონტექსტური ფორმატი: TikTok = 9:16
                 FINAL_W, FINAL_H = 1080, 1920
-                IMAGE_RATIO = 0.75 
-                IMAGE_H = int(FINAL_H * IMAGE_RATIO) 
+                IMAGE_RATIO = 0.75
+                IMAGE_H = int(FINAL_H * IMAGE_RATIO)
                 
                 ai_prompt = f"""
                 Cinematic vertical shot, 3:4 aspect ratio. 
@@ -128,7 +130,12 @@ with tab1:
                 """
                 
                 st.info("🎨 სურათის გენერაცია...")
-                img = client.text_to_image(prompt=ai_prompt, model="black-forest-labs/FLUX.1-schnell", width=FINAL_W, height=IMAGE_H)
+                img = client.text_to_image(
+                    prompt=ai_prompt,
+                    model="black-forest-labs/FLUX.1-schnell",
+                    width=FINAL_W,
+                    height=IMAGE_H
+                )
                 
                 # --- C. კომპოზიცია + დიდი ლეიბლები ---
                 canvas = Image.new('RGB', (FINAL_W, FINAL_H), color=(10, 10, 12))
@@ -150,7 +157,11 @@ with tab1:
                     x_center = (i * door_width) + (door_width // 2)
                     x_left = x_center - box_w // 2
                     y_top = y_start
+                    
+                    # 1. ვხატავთ ფონს + ჩარჩოს
                     draw.rectangle([x_left, y_top, x_left + box_w, y_top + box_h], fill=(25, 25, 25), outline=(255, 255, 255), width=5)
+                    
+                    # 2. ვხატავთ ტექსტს ცენტრში
                     bbox = draw.textbbox((0, 0), label, font=font)
                     txt_w = bbox[2] - bbox[0]
                     txt_h = bbox[3] - bbox[1]
@@ -172,7 +183,6 @@ with tab1:
         st.text_area("📜 გენერირებული ტექსტი", st.session_state['gen_text'], height=200)
         
         # 2. სურათი ქვემოთ, ცენტრში და სრული სიგანით
-        # ვიყენებთ სვეტებს "მარჯინის" შესაქმნელად, რათა სურათი ვიზუალურად ცენტრში იყოს
         col_margin, col_main, col_margin = st.columns([0.2, 1, 0.2])
         with col_main:
             st.image(st.session_state['gen_image'], caption="🚪 A | B | C (მკაფიო და დიდი)", use_column_width=True)
