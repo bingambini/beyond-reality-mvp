@@ -3,9 +3,11 @@ import json
 import google.generativeai as genai
 from huggingface_hub import InferenceClient
 from PIL import Image, ImageDraw, ImageFont
+import requests
+import io
 import time
 
-st.set_page_config(page_title="Beyond Reality — MVP", page_icon="️", layout="wide")
+st.set_page_config(page_title="Beyond Reality — MVP", page_icon="🏛️", layout="wide")
 
 # --- 1. მონაცემების ჩატვირთვა ---
 @st.cache_resource
@@ -60,11 +62,67 @@ def generate_with_smart_fallback(api_key, prompt, max_retries=2):
                             st.warning(f"⚠️ {model_name} ამოიწურა. გადავდივარ შემდეგზე...")
                             break
                     elif 'not found' in error_msg.lower() or 'not supported' in error_msg.lower():
-                        st.warning(f"️ {model_name} არ არის ხელმისაწვდომი.")
+                        st.warning(f"⚠️ {model_name} არ არის ხელმისაწვდომი.")
                         break
                     else: raise e
         except Exception: continue
-    raise Exception("❌ ყველა მოდელის ლიმიტი ამოიწურა. გთხოვთ დაელოდოთ ან დაამატოთ ახალი გასაღები.")
+    raise Exception("❌ ყველა მოდელის ლიმიტი ამოიწურა.")
+
+def generate_image_with_fallback(prompt, width, height, hf_api_key, max_retries=3):
+    """ჭკვიანი სურათის გენერაცია: თუ ერთი სერვისი ვერ მუშაობს, სცადოს მეორე"""
+    
+    # მეთოდი 1: Hugging Face (FLUX.1)
+    try:
+        st.info("🎨 მეთოდი 1/2: Hugging Face FLUX.1...")
+        client = InferenceClient(api_key=hf_api_key)
+        for attempt in range(max_retries):
+            try:
+                img = client.text_to_image(
+                    prompt=prompt,
+                    model="black-forest-labs/FLUX.1-schnell",
+                    width=width,
+                    height=height
+                )
+                st.success("✅ Hugging Face-მა წარმატებით დააგენერირა!")
+                return img
+            except Exception as e:
+                if '503' in str(e) or 'unavailable' in str(e).lower():
+                    if attempt < max_retries - 1:
+                        wait = 15 * (attempt + 1)
+                        st.warning(f"⏳ HF სერვერი დაკავებულია. ველოდები {wait}წმ... (ცდა {attempt+1}/{max_retries})")
+                        time.sleep(wait)
+                    else:
+                        st.warning("⚠️ Hugging Face ვერ მუშაობს. გადავდივარ Pollinations.ai-ზე...")
+                        break
+                else:
+                    raise e
+    except Exception as e:
+        st.warning(f"⚠️ Hugging Face შეცდომა: {str(e)[:100]}")
+    
+    # მეთოდი 2: Pollinations.ai (უფასო, no API key)
+    try:
+        st.info("🎨 მეთოდი 2/2: Pollinations.ai (ფოტო რეალისტური)...")
+        
+        # Pollinations-ისთვის პრომპტის ადაპტაცია
+        pollinations_prompt = f"photorealistic, {prompt}, high quality, detailed, 8k"
+        url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(pollinations_prompt)}?width={width}&height={height}&nologo=true&seed={int(time.time())}"
+        
+        response = requests.get(url, timeout=60)
+        if response.status_code == 200:
+            img = Image.open(io.BytesIO(response.content))
+            # კონვერტაცია RGB-ში (თუ RGBAა)
+            if img.mode == 'RGBA':
+                img = img.convert('RGB')
+            st.success("✅ Pollinations.ai-მ წარმატებით დააგენერირა!")
+            return img
+        else:
+            raise Exception(f"Pollinations returned status {response.status_code}")
+            
+    except Exception as e:
+        st.warning(f"⚠️ Pollinations.ai შეცდომა: {str(e)[:100]}")
+    
+    # თუ აქ მოვედით, ყველა მეთოდი ჩავარდა
+    raise Exception("❌ ყველა სურათის გენერაციის სერვისი ვერ მუშაობს. გთხოვთ სცადოთ 5 წუთში.")
 
 secrets = load_secrets()
 template = load_template()
@@ -75,26 +133,26 @@ st.markdown("*AI Content Empire | Psych Tests MVP*")
 
 col1, col2, col3 = st.columns(3)
 with col1: st.metric("Gemini API", "🟢 Active" if secrets["GEMINI"] else "🔴 Missing")
-with col2: st.metric("HF API", " Active" if secrets["HF"] else " Missing")
+with col2: st.metric("HF API", "🟢 Active" if secrets["HF"] else "🔴 Missing")
 with col3: st.metric("Template", "📄 Loaded")
 
 tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Director v11.0 — SUPER MASSIVE Labels)")
+    st.subheader("🔮 ტესტის გენერაცია (Director v12.0 — Image Fallback)")
     
     col_a, col_b, col_c = st.columns(3)
     with col_a: lang = st.selectbox("🌐 ენა", template["languages"], index=0)
     with col_b: setting = st.selectbox("🖼️ სცენა", template["generation"]["image_settings"])
     with col_c:
-        format_choice = st.selectbox(" ფორმატი", [
+        format_choice = st.selectbox("📐 ფორმატი", [
             "9:16 (Vertical / TikTok)", 
             "16:9 (Horizontal / YouTube)", 
             "1:1 (Square / Instagram)"
         ], index=0)
     
     if st.button("🚀 დაიწყე გენერაცია", type="primary"):
-        with st.spinner("🤖 დირიჟორი ამუშავებს ოგიკას..."):
+        with st.spinner("🤖 დირიჟორი ამუშავებს ლოგიკას (Multi-Fallback Enabled)..."):
             try:
                 if not secrets["GEMINI"]:
                     st.error("❌ GEMINI_API_KEY არ არის დაყენებული!")
@@ -124,17 +182,17 @@ with tab1:
                 IMPORTANT: Fill the entire frame, detailed ground/floor, no empty space.
                 """
                 
-                client = InferenceClient(api_key=secrets["HF"])
+                # --- სურათის გენერაცია (Fallback სისტემით) ---
                 st.info(f"🎨 სურათის გენერაცია ({W}x{H})...")
-                img = client.text_to_image(prompt=ai_prompt, model="black-forest-labs/FLUX.1-schnell", width=W, height=H)
+                img = generate_image_with_fallback(ai_prompt, W, H, secrets["HF"])
                 
-                # --- ეიბლების დადება (SUPER MASSIVE Labels) ---
+                # --- ლეიბლების დადება (SUPER MASSIVE Labels) ---
                 canvas = img.copy()
                 draw = ImageDraw.Draw(canvas)
                 
                 # 1. ზომის რადიკალური გაზრდა (70% სიგანიდან!)
-                font_size = int(W * 0.70)  # ადრე იყო 0.35, ახლა 0.70 (2-ჯერ დიდი)
-                y_pos = int(H * 0.70)      # პოზიცია ცენტრთან უფრო ახლოს
+                font_size = int(W * 0.70)
+                y_pos = int(H * 0.70)
                 
                 try:
                     font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
@@ -156,13 +214,13 @@ with tab1:
                         label, 
                         fill=(255, 255, 255), 
                         font=font, 
-                        stroke_width=25,      # ადრე იყო 15, ახლა 25
+                        stroke_width=25,
                         stroke_fill=(0, 0, 0)
                     )
                 
                 st.session_state['gen_text'] = text_response.text
                 st.session_state['gen_image'] = canvas
-                st.success(f"✅ წარმატებით! ({cfg['desc']} + SUPER Labels)")
+                st.success(f"✅ წარმატებით! ({cfg['desc']} + Fallback System)")
                 
             except Exception as e:
                 st.error(f"❌ შეცდომა: {str(e)}")
@@ -171,11 +229,11 @@ with tab1:
     if 'gen_text' in st.session_state:
         st.divider()
         st.subheader(f"📝 შედეგები ({format_choice})")
-        st.text_area(" ტექსტი", st.session_state['gen_text'], height=120)
+        st.text_area("📜 ტექსტი", st.session_state['gen_text'], height=120)
         
         col_m, col_c, col_m = st.columns([0.1, 1, 0.1])
         with col_c:
-            st.image(st.session_state['gen_image'], caption=" A | B | C (SUPER Overlay)", use_column_width=True)
+            st.image(st.session_state['gen_image'], caption="🚪 A | B | C (SUPER Overlay)", use_column_width=True)
 
 with tab2: st.info("🚧 დისტრიბუციის მოდული მომზადებაშია...")
 with tab3: st.info("🚧 მონეტიზაციის მოდული მომზადებაშია...")
