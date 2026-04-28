@@ -47,12 +47,12 @@ with col3: st.metric("Template", "📄 Loaded")
 tab1, tab2, tab3 = st.tabs(["⚙️ გენერაცია", "📤 დისტრიბუცია", "💰 მონეტიზაცია"])
 
 with tab1:
-    st.subheader("🔮 ტესტის გენერაცია (Director v5.0 — Safe Zone Logic)")
+    st.subheader("🔮 ტესტის გენერაცია (Director v5.1 — Large Labels)")
     
     lang = st.selectbox("🌐 ენა", template["languages"], index=0)
     setting = st.selectbox("🖼️ სცენა", template["generation"]["image_settings"])
     
-    if st.button("🚀 დაიწყე გენერაცია (Safe Zone)", type="primary"):
+    if st.button("🚀 დაიწყე გენერაცია", type="primary"):
         with st.spinner("🤖 დირიჟორი ზომავს სივრცეს და ქმნის კომპოზიციას..."):
             try:
                 # --- A. ტექსტის გენერაცია ---
@@ -63,13 +63,10 @@ with tab1:
                 # --- B. ვიზუალური გენერაცია (Safe Zone Logic) ---
                 client = InferenceClient(api_key=secrets["HF"])
                 
-                # 1. განვსაზღვროთ ზომები (9:16 ფორმატი)
                 FINAL_W, FINAL_H = 1080, 1920
-                IMAGE_RATIO = 0.75 # სურათი დაიკავებს ზედა 75%-ს
-                IMAGE_H = int(FINAL_H * IMAGE_RATIO) # 1440px
+                IMAGE_RATIO = 0.75 
+                IMAGE_H = int(FINAL_H * IMAGE_RATIO) 
                 
-                # 2. "ჭკვიანი პრომპტი" - ვთხოვთ AI-ს ფოკუსირდეს ზედა ნაწილზე
-                # ჩვენ ვიცით, რომ ქვედა ნაწილი ჩვენს კოდში იქნება შავი.
                 ai_prompt = f"""
                 Cinematic vertical shot, 3:4 aspect ratio. 
                 Three distinct doors standing side-by-side in a {setting}. 
@@ -77,7 +74,6 @@ with tab1:
                 Composition: Doors should be centered. High detail, 8k.
                 """
                 
-                # ვითხოვთ სურათს ზუსტად იმ ზომით, რაც ზედა ნაწილისთვის გვჭირდება
                 img = client.text_to_image(
                     prompt=ai_prompt, 
                     model="black-forest-labs/FLUX.1-schnell",
@@ -85,39 +81,41 @@ with tab1:
                     height=IMAGE_H 
                 )
                 
-                # --- C. კომპოზიცია (კოდით) ---
-                # 1. ვქმნით სუფთა შავ კანვასს (სრული 9:16)
+                # --- C. კომპოზიცია + დიდი ლეიბლები ---
                 canvas = Image.new('RGB', (FINAL_W, FINAL_H), color=(10, 10, 12))
-                
-                # 2. ვაკრავთ AI-ის სურათს ზედა ნაწილში (0, 0)
-                # ეს გარანტიას გვაძლევს, რომ ქვედა 25% დარჩება სუფთა შავი
                 canvas.paste(img, (0, 0))
                 
-                # 3. ვხატავთ ლეიბლებს (A, B, C) ქვედა ნაწილში (უსაფრთხო ზონაში)
                 draw = ImageDraw.Draw(canvas)
+                
+                # შრიფტის პარამეტრები
+                FONT_SIZE = 180
                 try:
-                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 90)
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
                 except:
                     font = ImageFont.load_default()
                 
                 door_width = FINAL_W // 3
-                # ლეიბლების Y პოზიცია: სურათის ბოლოდან ცოტა ქვემოთ
-                y_label = IMAGE_H + 50 
+                y_start = IMAGE_H + 60  # შავი ზონის დასაწყისიდან 60px ქვემოთ
+                box_h = 220
+                box_w = 200
                 
                 for i, label in enumerate(["A", "B", "C"]):
-                    x = (i * door_width) + (door_width // 2)
-                    # ტექსტის ზომის გაზომვა ცენტრირებისთვის
+                    x_center = (i * door_width) + (door_width // 2)
+                    x_left = x_center - box_w // 2
+                    y_top = y_start
+                    
+                    # 1. ვხატავთ ფონს + ჩარჩოს
+                    draw.rectangle([x_left, y_top, x_left + box_w, y_top + box_h], fill=(25, 25, 25), outline=(255, 255, 255), width=5)
+                    
+                    # 2. ვხატავთ ტექსტს ცენტრში
                     bbox = draw.textbbox((0, 0), label, font=font)
                     txt_w = bbox[2] - bbox[0]
-                    
-                    # ვხატავთ თეთრ ასოს
-                    draw.text((x - txt_w//2, y_label), label, fill=(255, 255, 255), font=font)
-                    # ვამატებთ პატარა ხაზს ან წერტილს ვიზუალური გამყოფისთვის
-                    draw.ellipse([x-5, y_label+100, x+5, y_label+110], fill=(50, 50, 50))
+                    txt_h = bbox[3] - bbox[1]
+                    draw.text((x_center - txt_w//2, y_top + (box_h - txt_h)//2 - 15), label, fill=(255, 255, 255), font=font)
                 
                 st.session_state['gen_text'] = text_response.text
                 st.session_state['gen_image'] = canvas
-                st.success("✅ დირიჟორმა ზუსტად დაყო სივრცე!")
+                st.success("✅ დირიჟორმა ზუსტად დაყო სივრცე + დიდი ლეიბლები!")
                 
             except Exception as e:
                 st.error(f"❌ შეცდომა: {str(e)}")
@@ -125,12 +123,12 @@ with tab1:
     # შედეგების ჩვენება
     if 'gen_text' in st.session_state:
         st.divider()
-        st.subheader("📝 შედეგები (Safe Zone Composition)")
+        st.subheader("📝 შედეგები (Safe Zone + Large Labels)")
         col_a, col_b = st.columns([1, 1])
         with col_a:
             st.text_area("გენერირებული ტექსტი", st.session_state['gen_text'], height=400)
         with col_b:
-            st.image(st.session_state['gen_image'], caption="🚪 ზედა ნაწილი: სურათი | ქვედა ნაწილი: ლეიბლები", use_column_width=True)
+            st.image(st.session_state['gen_image'], caption="🚪 A | B | C (მკაფიო და დიდი)", use_column_width=True)
 
 with tab2: st.info("🚧 დისტრიბუციის მოდული მომზადებაშია...")
 with tab3: st.info("🚧 მონეტიზაციის მოდული მომზადებაშია...")
