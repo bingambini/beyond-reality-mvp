@@ -236,20 +236,25 @@ class AssemblerAgent:
     def execute(self, image_path, audio_path, duration, output_path):
         self.log.add("AssemblerAgent", "დაიწყო ვიდეოს აწყობა...", "start")
         
-        # 1. აბსოლუტური გზების გარდაქმნა
+        # 1. ლოგირება და ვალიდაცია (კრიტიკული ნაბიჯი)
+        self.log.add("AssemblerAgent", f"🔍 შემომავალი აუდიო გზა: '{audio_path}'", indent=1)
+        
+        if not audio_path or str(audio_path).strip() == "":
+            self.log.add("AssemblerAgent", "❌ აუდიო გზა ცარიელია! ვიდეოს აწყობა შეუძლებელია.", "error")
+            return None
+            
+        # 2. აბსოლუტური გზების გარდაქმნა
         image_path = os.path.abspath(image_path)
         audio_path = os.path.abspath(audio_path)
         output_path = os.path.abspath(output_path)
         
-        self.log.add("AssemblerAgent", "🔍 საწყისი ფაილები:", indent=1)
         self.log.add("AssemblerAgent", f"📷 სურათი: {os.path.basename(image_path)} (არსებობს: {os.path.exists(image_path)})", indent=1)
         self.log.add("AssemblerAgent", f"🎙️ ხმა: {os.path.basename(audio_path)} (არსებობს: {os.path.exists(audio_path)})", indent=1)
 
-        # 2. ფაილების ვალიდაცია
         if not os.path.exists(image_path):
             self.log.add("AssemblerAgent", f"❌ სურათის ფაილი ვერ მოიძებნა: {image_path}", "error")
             return None
-        if not audio_path or not os.path.exists(audio_path):
+        if not os.path.exists(audio_path):
             self.log.add("AssemblerAgent", f"❌ ხმის ფაილი ვერ მოიძებნა: {audio_path}", "error")
             return None
 
@@ -340,14 +345,20 @@ with col_ui:
                     img.save(path)
                     P.data["image"] = path
                 elif i == 4:
-                    dur = mp.AudioFileClip(P.data["audio"]).duration + 2.0 if P.data["audio"] else 12.0
-                    ts = datetime.now().strftime("%H%M%S")
-                    vid_path = os.path.join(CONFIG["OUTPUT_DIR"], f"video_{ts}.mp4")
-                    P.data["video"] = AssemblerAgent(logger).execute(P.data["image"], P.data["audio"], dur, vid_path)
+                    # კრიტიკული შემოწმება: ხმა არსებობს?
+                    if not P.data.get("audio"):
+                        logger.add("SYSTEM", "❌ ხმის ფაილი არ არსებობს (Step 2 ჩავარდა). ვიდეო ვერ აიწყობა.", "error")
+                    else:
+                        dur = mp.AudioFileClip(P.data["audio"]).duration + 2.0
+                        ts = datetime.now().strftime("%H%M%S")
+                        vid_path = os.path.join(CONFIG["OUTPUT_DIR"], f"video_{ts}.mp4")
+                        P.data["video"] = AssemblerAgent(logger).execute(P.data["image"], P.data["audio"], dur, vid_path)
                 elif i == 5:
                     StorageAgent(logger).execute(os.path.dirname(P.data["video"] or "."))
                 
-                P.step = i + 1
+                # ნაბიჯის გადართვა მხოლოდ წარმატების შემთხვევაში (გარდა Step 4-ისა სადაც შეიძლება ჩავარდნა იყოს)
+                if i != 4 or P.data.get("video"):
+                    P.step = i + 1
             except Exception as e:
                 logger.add("SYSTEM", f"კრიტიკული შეცდომა ნაბიჯზე {i+1}: {str(e)}", "error")
 
