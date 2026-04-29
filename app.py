@@ -10,13 +10,15 @@ from PIL import Image, ImageDraw, ImageFont
 import google.generativeai as genai
 import edge_tts
 import moviepy.editor as mp
+import moviepy.config as mpy_config
 from huggingface_hub import InferenceClient
 import imageio.plugins.ffmpeg
 
 # ==================== კონფიგურაცია ====================
-# კრიტიკული: ffmpeg-ის გზის მითითება Streamlit Cloud-ისთვის
+# კრიტიკული: ffmpeg-ის გზის მითითება
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
 os.environ["IMAGEIO_FFMPEG_BINARY"] = "/usr/bin/ffmpeg"
+mpy_config.change_settings({"FFMPEG_BINARY": "/usr/bin/ffmpeg"})
 
 CONFIG = {
     "GEMINI_API_KEY": st.secrets.get("GEMINI_API_KEY", ""),
@@ -166,7 +168,11 @@ class VoiceAgent:
                 await communicate.save(output_path)
                 
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    dur = mp.AudioFileClip(output_path).duration
+                    # FIX: ვკეტავთ კლიპს ხანგრძლივობის წაკითხვის შემდეგ
+                    temp_clip = mp.AudioFileClip(output_path)
+                    dur = temp_clip.duration
+                    temp_clip.close()
+                    
                     self.log.add("VoiceProcessor", f"შედეგი: {dur:.1f} წამი ✅ ({voice})", indent=2, sub="VoiceProcessor")
                     self.log.add("VoiceAgent", f"✅ წარმატება! გამოყენებულია: {voice}", "end")
                     return output_path
@@ -236,14 +242,12 @@ class AssemblerAgent:
     def execute(self, image_path, audio_path, duration, output_path):
         self.log.add("AssemblerAgent", "დაიწყო ვიდეოს აწყობა...", "start")
         
-        # 1. ლოგირება და ვალიდაცია (კრიტიკული ნაბიჯი)
         self.log.add("AssemblerAgent", f"🔍 შემომავალი აუდიო გზა: '{audio_path}'", indent=1)
         
         if not audio_path or str(audio_path).strip() == "":
             self.log.add("AssemblerAgent", "❌ აუდიო გზა ცარიელია! ვიდეოს აწყობა შეუძლებელია.", "error")
             return None
             
-        # 2. აბსოლუტური გზების გარდაქმნა
         image_path = os.path.abspath(image_path)
         audio_path = os.path.abspath(audio_path)
         output_path = os.path.abspath(output_path)
@@ -271,6 +275,11 @@ class AssemblerAgent:
             self.log.add("AssemblerAgent", "აერთიანებს მედია კომპონენტებს...", indent=1)
             video = clip.set_audio(final_audio)
             video.write_videofile(output_path, codec="libx264", audio_codec="aac", fps=24, logger=None)
+            
+            # FIX: ვკეტავთ კლიპებს რესურსების გასათავისუფლებლად
+            audio.close()
+            if music: music.close()
+            clip.close()
             
             size_mb = os.path.getsize(output_path) / (1024*1024)
             self.log.add("VideoQC", "ამოწმებს ფაილის მთლიანობასა და ზომას", indent=1, sub="VideoQC")
@@ -345,18 +354,20 @@ with col_ui:
                     img.save(path)
                     P.data["image"] = path
                 elif i == 4:
-                    # კრიტიკული შემოწმება: ხმა არსებობს?
                     if not P.data.get("audio"):
-                        logger.add("SYSTEM", "❌ ხმის ფაილი არ არსებობს (Step 2 ჩავარდა). ვიდეო ვერ აიწყობა.", "error")
+                        logger.add("SYSTEM", "❌ ხმის ფაილი არ არსებობს. ვიდეო ვერ აიწყობა.", "error")
                     else:
-                        dur = mp.AudioFileClip(P.data["audio"]).duration + 2.0
+                        # FIX: ვკეტავთ კლიპს ხანგრძლივობის წაკითხვის შემდეგ
+                        temp_audio = mp.AudioFileClip(P.data["audio"])
+                        dur = temp_audio.duration + 2.0
+                        temp_audio.close()
+                        
                         ts = datetime.now().strftime("%H%M%S")
                         vid_path = os.path.join(CONFIG["OUTPUT_DIR"], f"video_{ts}.mp4")
                         P.data["video"] = AssemblerAgent(logger).execute(P.data["image"], P.data["audio"], dur, vid_path)
                 elif i == 5:
                     StorageAgent(logger).execute(os.path.dirname(P.data["video"] or "."))
                 
-                # ნაბიჯის გადართვა მხოლოდ წარმატების შემთხვევაში (გარდა Step 4-ისა სადაც შეიძლება ჩავარდნა იყოს)
                 if i != 4 or P.data.get("video"):
                     P.step = i + 1
             except Exception as e:
