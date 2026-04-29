@@ -45,7 +45,22 @@ class HierarchicalLogger:
             st.markdown("**📊 სისტემური ლოგები**")
             st.code("\n".join(self.entries[-40:]), language="text")
 
-# ==================== აგენტები (Multi-Provider Fallback) ====================
+# ==================== დამხმარე ფუნქციები ====================
+def clean_incomplete_text(text):
+    """თუ ტექსტი წყდება შუაში, აშორებს ან ასრულებს წინადადებას"""
+    text = text.strip()
+    if not text: return ""
+    # თუ ბოლო სიმბოლო არ არის პუნქტუაცია, ვეძებთ ბოლო სრულ წინადადებას
+    if text[-1] not in ['.', '!', '?', '…']:
+        # ვპოულობთ ბოლო წერტილს
+        last_dot = text.rfind('.')
+        if last_dot > len(text) / 2: # თუ წერტილი შუაზე მეტია
+            return text[:last_dot+1]
+        else:
+            return text + "." # თუ წერტილი არ არის, ვამატებთ
+    return text
+
+# ==================== აგენტები ====================
 
 class ThemeAgent:
     def __init__(self, vault, logger):
@@ -55,13 +70,13 @@ class ThemeAgent:
     def execute(self):
         self.log.add("ThemeAgent", "თემის შერჩევა (Multi-Provider)...", "start")
         
-        # პროვაიდერების სია (რიგითი მნიშვნელობით)
         providers = [
             ("gemini_text", "Google Gemini"),
             ("openrouter", "OpenRouter"),
             ("groq", "Groq")
         ]
 
+        # მოთხოვნა: მოკლე და სრული
         prompt = """
         შექმენი უნიკალური კინემატოგრაფიული თემა 9:16 ვიდეოსთვის.
         მიმართულება: "მელანქოლიური, რომანტიკული, ქალაქური ან ბუნებრივი სცენა".
@@ -71,6 +86,7 @@ class ThemeAgent:
         2. დაამატე ემოციური კონტექსტი.
         3. იყავი ლაკონიური! მაქსიმუმ 5-8 წინადადება.
         4. ენა: ქართული.
+        5. ტექსტი უნდა იყოს სრული, ბოლომდე მიყვანილი.
         """
         
         for service_id, name in providers:
@@ -88,20 +104,25 @@ class ThemeAgent:
                 text = ""
                 if service_id == "gemini_text":
                     genai.configure(api_key=k)
-                    text = genai.GenerativeModel(model).generate_content(prompt).text
+                    # max_output_tokens გაზრდილია
+                    text = genai.GenerativeModel(model).generate_content(prompt, generation_config={"max_output_tokens": 500}).text
                 elif service_id == "openrouter":
                     headers = {"Authorization": f"Bearer {k}", "HTTP-Referer": "http://localhost", "X-Title": "BeyondReality"}
-                    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 150}, timeout=20)
+                    # max_tokens გაზრდილია 400-მდე
+                    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 400}, timeout=20)
                     if resp.status_code == 200: text = resp.json()["choices"][0]["message"]["content"]
                     else: raise Exception(f"API Error {resp.status_code}")
                 elif service_id == "groq":
                     headers = {"Authorization": f"Bearer {k}", "Content-Type": "application/json"}
-                    resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 150}, timeout=20)
+                    # max_tokens გაზრდილია 500-მდე (Groq უფასოზე ხშირად აქვს ლიმიტი, მაგრამ 500 უნდა გასწიოს)
+                    resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 500}, timeout=20)
                     if resp.status_code == 200: text = resp.json()["choices"][0]["message"]["content"]
                     else: raise Exception(f"API Error {resp.status_code}")
                 
+                # ტექსტის გასუფთავება
+                final_text = clean_incomplete_text(text.strip().replace('"', ''))
                 self.log.add("ThemeAgent", f"✅ წარმატება ({name})", "success")
-                return text.strip().replace('"', '')
+                return final_text
             except Exception as e:
                 self.log.add("ThemeAgent", f"❌ შეცდომა {name}-ზე: {str(e)[:40]}", "error")
                 continue
@@ -120,7 +141,7 @@ class ScriptAgent:
             ("groq", "Groq")
         ]
         
-        prompt_content = f"დაწერე ემოციური მიკრო-ისტორია (2-3 წინ.) ქართულად. თემა: '{theme}'. სტილი: მელანქოლიური, კინემატოგრაფიული."
+        prompt_content = f"დაწერე ემოციური მიკრო-ისტორია (2-4 წინ.) ქართულად. თემა: '{theme}'. სტილი: მელანქოლიური, კინემატოგრაფიული. ტექსტი უნდა იყოს სრული, ბოლომდე მიყვანილი."
 
         for service_id, name in providers:
             k = self.vault.get_key(service_id, 0)
@@ -137,21 +158,23 @@ class ScriptAgent:
                 txt = ""
                 if service_id == "gemini_text":
                     genai.configure(api_key=k)
-                    txt = genai.GenerativeModel(model).generate_content(prompt_content, generation_config={"temperature":0.8}).text
+                    txt = genai.GenerativeModel(model).generate_content(prompt_content, generation_config={"temperature":0.8, "max_output_tokens": 500}).text
                 elif service_id == "openrouter":
                     headers = {"Authorization": f"Bearer {k}", "HTTP-Referer": "http://localhost", "X-Title": "BeyondReality"}
-                    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt_content}], "max_tokens": 150, "temperature": 0.8}, timeout=30)
+                    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt_content}], "max_tokens": 400, "temperature": 0.8}, timeout=30)
                     if resp.status_code == 200: txt = resp.json()["choices"][0]["message"]["content"]
                     else: raise Exception(f"Error {resp.status_code}")
                 elif service_id == "groq":
                     headers = {"Authorization": f"Bearer {k}", "Content-Type": "application/json"}
-                    resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt_content}], "max_tokens": 150, "temperature": 0.8}, timeout=30)
+                    # Groq-სთვის ლიმიტი მაქსიმალურად გავზარდეთ
+                    resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt_content}], "max_tokens": 1000, "temperature": 0.8}, timeout=30)
                     if resp.status_code == 200: txt = resp.json()["choices"][0]["message"]["content"]
                     else: raise Exception(f"Error {resp.status_code}")
                 
-                txt = txt.strip().replace('"','').replace('*','')
+                # ტექსტის გასუფთავება და დასრულება
+                final_txt = clean_incomplete_text(txt.strip().replace('"','').replace('*',''))
                 self.log.add("ScriptAgent", f"✅ წარმატება ({name})", "success")
-                return txt
+                return final_txt
             except Exception as e: 
                 self.log.add("ScriptAgent", f"❌ შეცდომა {name}-ზე: {str(e)[:40]}", "error")
                 continue
@@ -176,47 +199,105 @@ class VisualAgent:
     def __init__(self, vault, logger): self.vault=vault; self.log=logger
     def execute(self, theme, w, h):
         self.log.add("VisualAgent", "ვიზუალის გენერაცია...", "start")
+        # პრომპტი გავამარტივეთ, რათა უკეთ მუშაობდეს
         prompt=f"Cinematic vertical shot (9:16). {theme}. Moody, emotional, high detail, 8k."
+        
         k = self.vault.get_key("hf_image", 0)
         if k:
             try:
                 img = InferenceClient(api_key=k).text_to_image(prompt, model="black-forest-labs/FLUX.1-schnell", width=w, height=h)
-                self.log.add("VisualAgent", "✅ (HF_FLUX)", "end"); return img
-            except: pass
+                self.log.add("VisualAgent", f"✅ რეზოლუცია: {img.width}x{img.height} (HF_FLUX)", "end"); return img
+            except Exception as e: 
+                self.log.add("VisualAgent", f"HF ჩავარდა: {str(e)[:30]}", "warning")
         
-        self.log.add("VisualAgent", "HF ჩავარდა, ვცდილობ Pollinations-ს...", "warning")
-        try:
-            img = Image.open(io.BytesIO(requests.get(f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width={w}&height={h}&nologo=true&seed={random.randint(1,99999)}&model=flux", timeout=60).content)).convert('RGB')
-            self.log.add("VisualAgent", "✅ (Pollinations)", "end"); return img
-        except: 
-            self.log.add("VisualAgent", "❌ ვიზუალი ვერ შეიქმნა", "error")
-            return None
+        # Pollinations-სთვის ცდის მექანიზმი (Retry Loop)
+        self.log.add("VisualAgent", "ვცდილობ Pollinations-ს...", "warning")
+        for attempt in range(3):
+            try:
+                url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width={w}&height={h}&nologo=true&seed={random.randint(1,99999)}&model=flux"
+                self.log.add("VisualAgent", f"ცდა {attempt+1}/3...", indent=1)
+                resp = requests.get(url, timeout=90) # გაზრდილი ტაიმაუტი
+                if resp.status_code == 200:
+                    img = Image.open(io.BytesIO(resp.content)).convert('RGB')
+                    self.log.add("VisualAgent", f"✅ რეზოლუცია: {img.width}x{img.height} (Pollinations)", "end")
+                    return img
+            except Exception as e: 
+                self.log.add("VisualAgent", f"Pollinations შეცდომა: {str(e)[:30]}", "warning")
+                time.sleep(2) # მოლოდინი შემდეგ ცდამდე
+
+        self.log.add("VisualAgent", "❌ ვიზუალი ვერ შეიქმნა ყველა წყაროზე", "error")
+        return None
 
 class AssemblerAgent:
     def __init__(self, logger):
-        self.log=logger; self.m_path=os.path.join(CONFIG["OUTPUT_DIR"], "bg_music.mp3")
+        self.log=logger
+        self.m_path = os.path.join(CONFIG["OUTPUT_DIR"], "bg_music.mp3")
         if not os.path.exists(self.m_path):
             try:
+                self.log.add("AssemblerAgent", "🎵 ჩამოვტვირთავ ფონურ მუსიკას...", indent=1)
                 with open(self.m_path, "wb") as f: f.write(requests.get(CONFIG["FALLBACK_MUSIC_URL"], timeout=30).content)
-            except: self.m_path=None
+                self.log.add("AssemblerAgent", "🎵 მუსიკა ჩამოტვირთულია", indent=1)
+            except: 
+                self.log.add("AssemblerAgent", "⚠️ მუსიკის ჩამოტვირთვა ვერ მოხერხდა", "warning")
+                self.m_path=None
+
     def execute(self, img_p, aud_p, dur, out_p):
-        self.log.add("AssemblerAgent", "ვიდეოს აწყობა...", "start")
-        img_p, aud_p, out_p=map(os.path.abspath, [img_p, aud_p, out_p]); fin_aud=aud_p
+        self.log.add("AssemblerAgent", "🎬 ვქმნი კინემატოგრაფიულ ვიდეოს...", "start")
+        img_p, aud_p, out_p = map(os.path.abspath, [img_p, aud_p, out_p])
+        fin_aud = aud_p
+        
+        # 1. ხმის შერევა
         if self.m_path and os.path.exists(self.m_path):
-            fin_aud=os.path.join(CONFIG["OUTPUT_DIR"], "mixed.mp3")
-            res=subprocess.run(["/usr/bin/ffmpeg","-y","-i",aud_p,"-i",self.m_path,"-filter_complex","[0:a][1:a]amix=inputs=2:duration=first","-c:a","libmp3lame","-q:a","2",fin_aud], capture_output=True)
-            if res.returncode!=0: fin_aud=aud_p
-        cmd=["/usr/bin/ffmpeg","-y","-loop","1","-i",img_p,"-i",fin_aud,"-c:v","libx264","-tune","stillimage","-c:a","aac","-b:a","192k","-pix_fmt","yuv420p","-shortest",out_p]
-        res=subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode==0:
-            self.log.add("AssemblerAgent", f"✅ ({os.path.getsize(out_p)/(1024*1024):.1f}MB)", "end"); return out_p
-        self.log.add("AssemblerAgent", f"❌ {res.stderr[:60]}", "error"); return None
+            self.log.add("AssemblerAgent", "🎵 ვურევ ნარაციას მუსიკასთან...", indent=1)
+            fin_aud = os.path.join(CONFIG["OUTPUT_DIR"], "mixed.mp3")
+            res = subprocess.run([
+                "/usr/bin/ffmpeg", "-y",
+                "-i", aud_p, "-i", self.m_path,
+                "-filter_complex", "[0:a]volume=1.5[a0];[1:a]volume=0.3[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=2",
+                "-c:a", "libmp3lame", "-q:a", "2", fin_aud
+            ], capture_output=True, text=True)
+            
+            if res.returncode != 0:
+                self.log.add("AssemblerAgent", "⚠️ შერევა ვერ მოხერხდა, ვიყენებთ მხოლოდ ხმას", "warning")
+                fin_aud = aud_p
+
+        # 2. ვიდეოს შექმნა + CINEMATIC ZOOM
+        self.log.add("AssemblerAgent", "🎞️ ვადებ კინემატოგრაფიულ ზუმს (Slow Zoom)...", indent=1)
+        
+        cmd = [
+            "/usr/bin/ffmpeg", "-y",
+            "-loop", "1", "-i", img_p,
+            "-i", fin_aud,
+            "-vf", "zoompan=z='min(zoom+0.0015,1.5)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920",
+            "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            out_p
+        ]
+        
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if res.returncode == 0:
+            size_mb = os.path.getsize(out_p) / (1024*1024)
+            try:
+                video_clip = mp.VideoFileClip(out_p)
+                vid_dur = video_clip.duration
+                video_clip.close()
+                self.log.add("AssemblerAgent", f"✅ ვიდეო მზადაა! ({size_mb:.1f}MB, {vid_dur:.1f}წმ)", "end")
+            except:
+                self.log.add("AssemblerAgent", f"✅ ვიდეო მზადაა! ({size_mb:.1f}MB)", "end")
+            return out_p
+        else:
+            self.log.add("AssemblerAgent", f"❌ FFmpeg შეცდომა: {res.stderr[:60]}", "error")
+            return None
 
 class StorageAgent:
     def __init__(self, logger): self.log=logger
     def execute(self, folder):
-        self.log.add("StorageAgent", "მენეჯმენტი...", "start"); os.makedirs(folder, exist_ok=True)
-        self.log.add("StorageAgent", f"✅ {len([f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))])} ფაილი", "end"); return folder
+        self.log.add("StorageAgent", "მენეჯმენტი...", "start")
+        os.makedirs(folder, exist_ok=True)
+        self.log.add("StorageAgent", f"✅ {len([f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))])} ფაილი", "end")
+        return folder
 
 # ==================== UI ====================
 st.set_page_config(page_title="🎬 AI Cinema Pipeline", page_icon="🎬", layout="wide")
@@ -242,7 +323,7 @@ with st.sidebar:
         if st.button("🔐 სეიფი", use_container_width=True, type="primary" if st.session_state.show_vault else "secondary"):
             st.session_state.show_vault=True; st.rerun()
     st.divider()
-    st.caption("v5.0 | Unstoppable Multi-Provider")
+    st.caption("v7.0 | Fixed Text Cutoff & Image Retry")
 
 col_log = st.empty()
 if "logger_obj" not in st.session_state: st.session_state.logger_obj = HierarchicalLogger(col_log)
@@ -278,7 +359,7 @@ if st.session_state.show_vault:
 
 else:
     st.title("🎬 AI Cinematic Pipeline")
-    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Unstoppable v5.0*")
+    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Fixed Text & Image v7.0*")
     col_ui, col_log_area = st.columns([1, 1])
     with col_log_area: logger._render()
     
@@ -288,7 +369,7 @@ else:
         if "data" not in st.session_state: st.session_state.data = {}
         P = st.session_state
         
-        steps=[("1. თემის შერჩევა","theme"),("2. სცენარის წერა","script"),("3. ხმის გენერაცია","audio"),("4. ვიზუალის შექმნა","image"),("5. ვიდეოს აწყობა","video"),("6. შენახვა","storage")]
+        steps=[("1. თემის შერჩევა","theme"),("2. სცენარის წერა","script"),("3. ხმის გენერაცია","audio"),("4. ვიზუალის შექმნა","image"),("5. ვიდეოს ანიმაცია","video"),("6. შენახვა","storage")]
 
         for i, (label, key) in enumerate(steps):
             is_done = i < P.step
