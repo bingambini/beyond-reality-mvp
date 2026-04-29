@@ -66,77 +66,54 @@ class VaultManager:
             return False, f"❌ შეცდომა: {str(e)[:40]}"
 
     # ============================================================
-    # ჭკვიანი მოდელის აღმოჩენა (განახლებული: დინამიური პოვნა)
+    # ჭკვიანი მოდელის აღმოჩენა (განახლებული: პირდაპირი ტესტირება)
     # ============================================================
     def discover_and_test_model(self, service_id, key):
         if not key: return None, "გასაღები არ არის"
 
         try:
-            model_name = None
-
             if service_id == "gemini_text":
                 genai.configure(api_key=key)
-                # ვიღებთ ყველა ხელმისაწვდომ მოდელს
                 models = genai.list_models()
-                # ვფილტრავთ მხოლოდ იმ მოდელებს, რომელსაც შეუძლია ტექსტის გენერაცია
                 candidates = [m.name.replace("models/", "") for m in models if 'generateContent' in m.supported_generation_methods]
-                
-                if not candidates:
-                    return None, "❌ ხელმისაწვდომი მოდელები ვერ მოიძებნა"
-
-                # ვცდილობთ ვიპოვოთ 'flash' ან 'pro' მოდელი უპირატესობით
-                for name in candidates:
-                    if 'flash' in name or 'pro' in name:
-                        model_name = name
-                        break
-                
-                # თუ ვერ ვიპოვეთ, ვიღებთ პირველსვე რაც არის
-                if not model_name:
-                    model_name = candidates[0]
-
-                # ტესტი
+                priority = ["gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro", "gemini-1.5-flash"]
+                model_name = next((p for p in priority if p in candidates), candidates[0] if candidates else None)
+                if not model_name: return None, "❌ ხელმისაწვდომი მოდელები ვერ მოიძებნა"
                 genai.GenerativeModel(model_name).generate_content("ping", generation_config={"max_output_tokens": 1})
                 return model_name, f"✅ გამოვლენილია: {model_name}"
 
             elif service_id == "openrouter":
                 headers = {"Authorization": f"Bearer {key}", "HTTP-Referer": "http://localhost", "X-Title": "BeyondReality"}
-                resp = requests.get("https://openrouter.ai/api/v1/models", headers=headers, timeout=10)
-                if resp.status_code == 200:
-                    data = resp.json().get("data", [])
-                    free_models = [m for m in data if m.get("pricing", {}).get("prompt") == 0 and m.get("pricing", {}).get("completion") == 0]
-                    if free_models:
-                        model_name = free_models[0]["id"]
-                    else:
-                        return None, "❌ უფასო მოდელები ვერ მოიძებნა"
-                else:
-                    return None, f"❌ API შეცდომა: {resp.status_code}"
-                
-                t_resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model_name, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}, timeout=10)
-                if t_resp.status_code == 200:
-                    return model_name, f"✅ გამოვლენილია: {model_name} (უფასო)"
-                else:
-                    return None, "❌ მოდელის ტესტი ვერ გაიარა"
+                # ცნობილი უფასო მოდელების პირდაპირი ტესტირება (ფასების ფილტრის ნაცვლად)
+                free_ids = [
+                    "meta-llama/llama-3-8b-instruct:free",
+                    "google/gemini-2.0-flash-exp:free",
+                    "microsoft/phi-3-mini-128k-instruct:free"
+                ]
+                for m_id in free_ids:
+                    try:
+                        resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": m_id, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}, timeout=10)
+                        if resp.status_code == 200:
+                            return m_id, f"✅ გამოვლენილია: {m_id}"
+                    except: pass
+                return None, "❌ OpenRouter უფასო მოდელები დაბლოკილია ან ლიმიტი ამოიწურა"
 
             elif service_id == "groq":
-                potential_models = ["llama3-8b-8192", "gemma2-9b-it", "llama-3.1-70b-versatile"]
                 headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-                for m in potential_models:
+                # აქტუალური Groq უფასო მოდელები
+                free_ids = ["llama-3.1-8b-instant", "llama3-8b-8192", "gemma2-9b-it"]
+                for m_id in free_ids:
                     try:
-                        t_resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": m, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}, timeout=5)
-                        if t_resp.status_code == 200:
-                            model_name = m
-                            break
-                    except: continue
-                if model_name:
-                    return model_name, f"✅ გამოვლენილია: {model_name} (უფასო)"
-                return None, "❌ Groq უფასო მოდელები მიუწვდომელია"
+                        resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": m_id, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}, timeout=5)
+                        if resp.status_code == 200:
+                            return m_id, f"✅ გამოვლენილია: {m_id}"
+                    except: pass
+                return None, "❌ Groq უფასო მოდელები დაბლოკილია ან ლიმიტი ამოიწურა"
 
             elif service_id == "deepseek":
-                model_name = "deepseek-chat"
                 try:
-                    t_resp = requests.post("https://api.deepseek.com/v1/chat/completions", headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, json={"model": model_name, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}, timeout=10)
-                    if t_resp.status_code == 200:
-                        return model_name, f"✅ გამოვლენილია: {model_name}"
+                    resp = requests.post("https://api.deepseek.com/v1/chat/completions", headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, json={"model": "deepseek-chat", "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}, timeout=10)
+                    if resp.status_code == 200: return "deepseek-chat", "✅ გამოვლენილია: deepseek-chat"
                 except: pass
                 return None, "❌ DeepSeek ტესტი ვერ გაიარა"
 
