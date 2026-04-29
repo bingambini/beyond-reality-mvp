@@ -11,11 +11,12 @@ import google.generativeai as genai
 import edge_tts
 import moviepy.editor as mp
 from huggingface_hub import InferenceClient
-import imageio # ffmpeg-ისთვის
+import imageio.plugins.ffmpeg
 
 # ==================== კონფიგურაცია ====================
-# ffmpeg-ის გზის მითითება Streamlit Cloud-ისთვის
+# კრიტიკული: ffmpeg-ის გზის მითითება Streamlit Cloud-ისთვის
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
+os.environ["IMAGEIO_FFMPEG_BINARY"] = "/usr/bin/ffmpeg"
 
 CONFIG = {
     "GEMINI_API_KEY": st.secrets.get("GEMINI_API_KEY", ""),
@@ -235,22 +236,27 @@ class AssemblerAgent:
     def execute(self, image_path, audio_path, duration, output_path):
         self.log.add("AssemblerAgent", "დაიწყო ვიდეოს აწყობა...", "start")
         
-        # 1. Validate Inputs - ეს აუცილებელია შეცდომის თავიდან ასაცილებლად
-        if not image_path or not os.path.exists(image_path):
-            self.log.add("AssemblerAgent", f"❌ სურათის ფაილი არ მოიძებნა: {image_path}", "error")
+        # 1. აბსოლუტური გზების გარდაქმნა
+        image_path = os.path.abspath(image_path)
+        audio_path = os.path.abspath(audio_path)
+        output_path = os.path.abspath(output_path)
+        
+        self.log.add("AssemblerAgent", "🔍 საწყისი ფაილები:", indent=1)
+        self.log.add("AssemblerAgent", f"📷 სურათი: {os.path.basename(image_path)} (არსებობს: {os.path.exists(image_path)})", indent=1)
+        self.log.add("AssemblerAgent", f"🎙️ ხმა: {os.path.basename(audio_path)} (არსებობს: {os.path.exists(audio_path)})", indent=1)
+
+        # 2. ფაილების ვალიდაცია
+        if not os.path.exists(image_path):
+            self.log.add("AssemblerAgent", f"❌ სურათის ფაილი ვერ მოიძებნა: {image_path}", "error")
             return None
         if not audio_path or not os.path.exists(audio_path):
-            self.log.add("AssemblerAgent", f"❌ აუდიო ფაილი არ მოიძებნა: {audio_path}", "error")
+            self.log.add("AssemblerAgent", f"❌ ხმის ფაილი ვერ მოიძებნა: {audio_path}", "error")
             return None
-            
-        self.log.add("AssemblerAgent", "იტვირთავს კომპონენტებს...", indent=1)
-        
+
         try:
-            # 2. Create Clips
             clip = mp.ImageClip(image_path).set_duration(duration)
             audio = mp.AudioFileClip(audio_path)
             
-            # 3. Mix Audio
             music = None
             if self.music_path and os.path.exists(self.music_path):
                 music = mp.AudioFileClip(self.music_path).volumex(0.25).set_duration(duration)
@@ -258,8 +264,6 @@ class AssemblerAgent:
             final_audio = mp.CompositeAudioClip([audio, music]) if music else audio
             
             self.log.add("AssemblerAgent", "აერთიანებს მედია კომპონენტებს...", indent=1)
-            
-            # 4. Export
             video = clip.set_audio(final_audio)
             video.write_videofile(output_path, codec="libx264", audio_codec="aac", fps=24, logger=None)
             
