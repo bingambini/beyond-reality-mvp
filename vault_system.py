@@ -53,7 +53,7 @@ class VaultManager:
         try:
             if service_id == "gemini_text":
                 genai.configure(api_key=key)
-                genai.GenerativeModel("gemini-1.5-flash").generate_content("ping", generation_config={"max_output_tokens": 1})
+                genai.GenerativeModel("gemini-pro").generate_content("ping", generation_config={"max_output_tokens": 1})
                 return True, "✅ ვალიდური და აქტიური"
             elif service_id == "hf_image":
                 resp = requests.get("https://huggingface.co/api/whoami-v2", headers={"Authorization": f"Bearer {key}"}, timeout=10)
@@ -66,12 +66,11 @@ class VaultManager:
             return False, f"❌ შეცდომა: {str(e)[:40]}"
 
     # ============================================================
-    # ახალი ლოგიკა: ჭკვიანი მოდელის აღმოჩენა და ტესტირება
+    # ჭკვიანი მოდელის აღმოჩენა (გასწორებული ვერსია)
     # ============================================================
     def discover_and_test_model(self, service_id, key):
         """
         ეკითხება პლატფორმას უფასო მოდელებს, ირჩევს საუკეთესოს და ტესტავს.
-        აბრუნებს: (model_name, status_message)
         """
         if not key: return None, "გასაღები არ არის"
 
@@ -81,28 +80,38 @@ class VaultManager:
             if service_id == "gemini_text":
                 genai.configure(api_key=key)
                 models = genai.list_models()
-                free_models = [m.name.replace("models/", "") for m in models if 'generateContent' in m.supported_generation_methods and 'free' in str(m.supported_generation_methods).lower()]
-                if free_models:
-                    model_name = free_models[0] # იღებს პირველ უფასოს
-                else:
-                    # ფოლბექი თუ free სიაში არ ჩანს მაგრამ მოდელი არსებობს
-                    model_name = "gemini-1.5-flash"
+                # ვპოულობთ ყველა მოდელს, რომელსაც შეუძლია ტექსტის გენერაცია
+                available_models = [m.name.replace("models/", "") for m in models if 'generateContent' in m.supported_generation_methods]
                 
+                # პრიორიტეტული სია (ყველაზე სტაბილურიდან)
+                priority_list = ["gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro", "gemini-1.5-flash"]
+                
+                # ვეძებთ პირველ მოდელს სიიდან, რომელიც ხელმისაწვდომია
+                for p_model in priority_list:
+                    if p_model in available_models:
+                        model_name = p_model
+                        break
+                
+                # თუ პრიორიტეტული ვერ ვიპოვეთ, ვიღებთ პირველსვე რაც არის
+                if not model_name and available_models:
+                    model_name = available_models[0]
+                
+                if not model_name:
+                    return None, "❌ ხელმისაწვდომი მოდელები ვერ მოიძებნა"
+
                 # ტესტი
                 genai.GenerativeModel(model_name).generate_content("ping", generation_config={"max_output_tokens": 1})
-                return model_name, f"✅ გამოვლენილია: {model_name} (უფასო)"
+                return model_name, f"✅ გამოვლენილია: {model_name}"
 
             elif service_id == "openrouter":
-                # 1. მოდელთა სიის მიღება
                 headers = {"Authorization": f"Bearer {key}", "HTTP-Referer": "http://localhost", "X-Title": "BeyondReality"}
                 resp = requests.get("https://openrouter.ai/api/v1/models", headers=headers, timeout=10)
                 if resp.status_code == 200:
                     data = resp.json().get("data", [])
-                    # ვფილტრავთ მხოლოდ უფასო მოდელებს (ფასი არის 0)
+                    # ვფილტრავთ უფასო მოდელებს
                     free_models = [m for m in data if m.get("pricing", {}).get("prompt") == 0 and m.get("pricing", {}).get("completion") == 0]
                     if free_models:
-                        # ვირჩევთ პოპულარულს ან პირველს
-                        model_name = free_models[0]["id"]
+                        model_name = free_models[0]["id"] # ვირჩევთ პირველ უფასოს
                     else:
                         return None, "❌ უფასო მოდელები ვერ მოიძებნა"
                 else:
@@ -116,10 +125,8 @@ class VaultManager:
                     return None, "❌ მოდელის ტესტი ვერ გაიარა"
 
             elif service_id == "groq":
-                # Groq-ს აქვს რამდენიმე ფიქსირებული უფასო მოდელი
                 potential_models = ["llama3-8b-8192", "gemma2-9b-it", "llama-3.1-70b-versatile"]
                 headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-                
                 for m in potential_models:
                     try:
                         t_resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": m, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}, timeout=5)
@@ -127,24 +134,21 @@ class VaultManager:
                             model_name = m
                             break
                     except: continue
-                
                 if model_name:
                     return model_name, f"✅ გამოვლენილია: {model_name} (უფასო)"
                 return None, "❌ Groq უფასო მოდელები მიუწვდომელია"
 
             elif service_id == "deepseek":
-                # DeepSeek-ს ჩვეულებრივ აქვს ერთი მთავარი ჩატ მოდელი
                 model_name = "deepseek-chat"
                 try:
-                    # OpenAI თავსებადი ენდპოინტი
                     t_resp = requests.post("https://api.deepseek.com/v1/chat/completions", headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, json={"model": model_name, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}, timeout=10)
                     if t_resp.status_code == 200:
-                        return model_name, f"✅ გამოვლენილია: {model_name} (უფასო/ტრიალი)"
+                        return model_name, f"✅ გამოვლენილია: {model_name}"
                 except: pass
                 return None, "❌ DeepSeek ტესტი ვერ გაიარა"
 
             else:
-                return None, "❌ ამ სერვისისთვის ავტომატური მოდელის ძიება არ არის მხარდაჭერილი"
+                return None, "❌ ამ სერვისისთვის ავტომატური ძიება არ არის მხარდაჭერილი"
 
         except Exception as e:
             return None, f"❌ შეცდომა ძიებისას: {str(e)[:50]}"
