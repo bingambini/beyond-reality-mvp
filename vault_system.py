@@ -6,32 +6,15 @@ import re
 
 VAULT_FILE = "vault_config.json"
 
-# დეფოლტ სტრუქტურა: 5 ველი თითო კატეგორიაზე
+# დეფოლტ კონფიგურაცია: 5 ველი თითო კატეგორიაზე
 DEFAULT_CONFIG = {
-    "gemini_text": {
-        "label": "🧠 Google Gemini (ტექსტი/AI)",
-        "type": "key",
-        "count": 5,
-        "keys": [""] * 5
-    },
-    "hf_image": {
-        "label": "🎨 HuggingFace (ვიზუალი/სურათები)",
-        "type": "key",
-        "count": 5,
-        "keys": [""] * 5
-    },
-    "github_repos": {
-        "label": "🐙 GitHub რეპოზიტორიები (კოდი/სკრიპტები)",
-        "type": "link",
-        "count": 5,
-        "keys": [""] * 5
-    },
-    "other_apis": {
-        "label": "🔌 სხვა პლატფორმების API გასაღებები",
-        "type": "key",
-        "count": 5,
-        "keys": [""] * 5
-    }
+    "gemini_text": {"label": "🧠 Google Gemini (ტექსტი/AI)", "type": "key", "count": 5, "keys": [""]*5},
+    "hf_image": {"label": "🎨 HuggingFace (ვიზუალი/სურათები)", "type": "key", "count": 5, "keys": [""]*5},
+    "groq": {"label": "🐦 Groq (სწრაფი LLM)", "type": "key", "count": 5, "keys": [""]*5},
+    "openrouter": {"label": "🌐 OpenRouter (მულტი-მოდელი)", "type": "key", "count": 5, "keys": [""]*5},
+    "deepseek": {"label": "🔍 DeepSeek (AI კოდი/ტექსტი)", "type": "key", "count": 5, "keys": [""]*5},
+    "github_repos": {"label": "🐙 GitHub რეპოზიტორიები (ლინკები)", "type": "link", "count": 5, "keys": [""]*5},
+    "other_apis": {"label": "🔌 სხვა პლატფორმები / დამატებითი", "type": "key", "count": 5, "keys": [""]*5}
 }
 
 class VaultManager:
@@ -44,11 +27,10 @@ class VaultManager:
             try:
                 with open(VAULT_FILE, "r", encoding="utf-8") as f:
                     self.config = json.load(f)
-                # ახალი კატეგორიების ავტომატური დამატება თუ განახლდა სისტემა
+                # ახალი კატეგორიების ავტო-დამატება
                 for k, v in DEFAULT_CONFIG.items():
-                    if k not in self.config:
-                        self.config[k] = v
-            except Exception:
+                    if k not in self.config: self.config[k] = v
+            except:
                 self.config = DEFAULT_CONFIG
         else:
             self.config = DEFAULT_CONFIG
@@ -58,48 +40,30 @@ class VaultManager:
             with open(VAULT_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
             return True
-        except Exception as e:
-            print(f"Vault Save Error: {e}")
-            return False
+        except: return False
 
     def get_key(self, service_id, index=0):
-        """იღებს კონკრეტული სერვისის კონკრეტულ გასაღებს"""
-        try:
-            return self.config[service_id]["keys"][index]
-        except (KeyError, IndexError):
-            return ""
+        try: return self.config[service_id]["keys"][index]
+        except: return ""
 
     def update_key(self, service_id, index, value):
-        """აახლებს კონკრეტულ გასაღებს კონფიგურაციაში"""
         if service_id in self.config:
             self.config[service_id]["keys"][index] = value
 
     def validate_key(self, service_id, key):
-        """ამოწმებს გასაღების/ლინკის ვალიდურობას"""
-        if not key or not key.strip():
-            return False, "ველი ცარიელია"
-        
+        if not key or not key.strip(): return False, "ველი ცარიელია"
         try:
             if service_id == "gemini_text":
                 genai.configure(api_key=key)
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                model.generate_content("ping", generation_config={"max_output_tokens": 1})
+                genai.GenerativeModel("gemini-1.5-flash").generate_content("ping", generation_config={"max_output_tokens": 1})
                 return True, "✅ ვალიდური და აქტიური"
-            
             elif service_id == "hf_image":
                 resp = requests.get("https://huggingface.co/api/whoami-v2", headers={"Authorization": f"Bearer {key}"}, timeout=10)
-                if resp.status_code == 200:
-                    return True, "✅ ვალიდური ტოკენი"
-                return False, f"❌ HF შეცდომა: {resp.status_code}"
-            
+                return (True, "✅ ვალიდური ტოკენი") if resp.status_code == 200 else (False, f"❌ შეცდომა: {resp.status_code}")
             elif service_id == "github_repos":
-                if re.match(r'^https://github\.com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+/?$', key):
-                    return True, "✅ ვალიდური GitHub ლინკი"
-                return False, "❌ არასწორი GitHub URL ფორმატი"
-            
+                return (True, "✅ ვალიდური ლინკი") if re.match(r'^https://github\.com/[\w\.-]+/[\w\.-]+/?$', key) else (False, "❌ არასწორი ფორმატი")
             else:
-                # სხვა API-ებისთვის ჯერ ბაზისური შემოწმება
-                return True, "✅ შენახულია"
-                
+                # Groq, OpenRouter, DeepSeek, Other -> ბაზისური შემოწმება
+                return True, "✅ ფორმატი მისაღებია / შენახულია"
         except Exception as e:
             return False, f"❌ შეცდომა: {str(e)[:40]}"
