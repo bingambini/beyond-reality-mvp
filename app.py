@@ -51,11 +51,11 @@ class ThemeResearcherAgent:
     def execute(self, d):
         self.log.add("ThemeResearcherAgent", f"კვლევა: {d}", indent=1)
         k = self.vault.get_key("gemini_text", 0)
-        if not k: return "წვიმიანი ქალაქის სცენა (გასაღები არ არის)"
+        if not k: return None
         
         model, msg = self.vault.discover_and_test_model("gemini_text", k)
         self.log.add("ThemeResearcherAgent", msg, "success" if model else "error", indent=1)
-        if not model: return None # Return None on failure so step doesn't complete
+        if not model: return None
         
         genai.configure(api_key=k)
         try: 
@@ -100,7 +100,8 @@ class ThemeValidator2:
     def check(self, t):
         self.log.add("ThemeValidator2", "სიგრძე/ვიზუალი...", indent=1, sub="V2")
         s=[x.strip() for x in t.split('.') if len(x.strip())>5]
-        ok=1<=len(s)<=4 and len(t)>15
+        # FIX: ლიმიტი გაზრდილია 4-დან 20-მდე, რათა დეტალური თემები მიიღოს
+        ok=1<=len(s)<=20 and len(t)>15
         self.log.add("ThemeValidator2", f"შედეგი: {'✅' if ok else '❌'} ({len(s)} წინ.)", indent=2, sub="V2"); return ok
 
 class ThemeAgent:
@@ -113,7 +114,7 @@ class ThemeAgent:
         d="მელანქოლიური, რომანტიკული, ქალაქური ან ბუნებრივი სცენა"; final=None
         for _ in range(2):
             raw=self.res.execute(d)
-            if not raw: return None # Stop if researcher fails
+            if not raw: return None
             p1=self.a1.execute(raw)
             final=self.a2.execute(p1)
             if self.v1.check(final) and self.v2.check(final):
@@ -236,7 +237,7 @@ with st.sidebar:
         if st.button("🔐 სეიფი", use_container_width=True, type="primary" if st.session_state.show_vault else "secondary"):
             st.session_state.show_vault=True; st.rerun()
     st.divider()
-    st.caption("v4.0 | Strict Flow & Auto Model Fix")
+    st.caption("v4.1 | Fixed Validator & Button Flow")
 
 col_log = st.empty()
 if "logger_obj" not in st.session_state: st.session_state.logger_obj = HierarchicalLogger(col_log)
@@ -272,7 +273,7 @@ if st.session_state.show_vault:
 
 else:
     st.title("🎬 AI Cinematic Pipeline")
-    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Smart Discovery v4.0*")
+    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Smart Discovery v4.1*")
     col_ui, col_log_area = st.columns([1, 1])
     with col_log_area: logger._render()
     
@@ -293,12 +294,13 @@ else:
             is_done = i < P.step
             is_active = i == P.step
             
-            # ვიზუალი
+            # ვიზუალი: დასრულებულ ნაბიჯებს ემატება ✅
             current_label = f"✅ {label}" if is_done else label
+            
+            # ღილაკის ტიპი: დასრულებული - ნაცრისფერი, აქტიური - ლურჯი, მომავალი - ნაცრისფერი
             btn_type = "secondary" if is_done else ("primary" if is_active else "secondary")
             
             # ღილაკი აქტიურია მხოლოდ მაშინ, როცა არის მიმდინარე ნაბიჯი
-            # წინა (Done) ნაბიჯები ჩაბნელებულია, რომ პროგრესი დავაფიქსიროთ
             disabled = not is_active 
             
             if st.button(current_label, key=f"btn_{i}", disabled=disabled, type=btn_type, use_container_width=True):
