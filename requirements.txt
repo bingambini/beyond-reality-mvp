@@ -15,8 +15,10 @@ python-dotenv
 pydantic
 
 # Media Processing
-moviepy
+moviepy==1.0.3
 edge-tts
+imageio[ffmpeg]
+numpy
 
 # Utilities
 requests
