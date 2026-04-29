@@ -45,6 +45,21 @@ class HierarchicalLogger:
             st.markdown("**📊 სისტემური ლოგები**")
             st.code("\n".join(self.entries[-40:]), language="text")
 
+# ==================== დამხმარე ფუნქციები ====================
+def clean_incomplete_text(text):
+    """თუ ტექსტი წყდება შუაში, აშორებს ან ასრულებს წინადადებას"""
+    text = text.strip()
+    if not text: return ""
+    # თუ ბოლო სიმბოლო არ არის პუნქტუაცია, ვეძებთ ბოლო სრულ წინადადებას
+    if text[-1] not in ['.', '!', '?', '…']:
+        # ვპოულობთ ბოლო წერტილს
+        last_dot = text.rfind('.')
+        if last_dot > len(text) / 2: # თუ წერტილი შუაზე მეტია
+            return text[:last_dot+1]
+        else:
+            return text + "." # თუ წერტილი არ არის, ვამატებთ
+    return text
+
 # ==================== აგენტები ====================
 
 class ThemeAgent:
@@ -61,6 +76,7 @@ class ThemeAgent:
             ("groq", "Groq")
         ]
 
+        # მოთხოვნა: მოკლე და სრული
         prompt = """
         შექმენი უნიკალური კინემატოგრაფიული თემა 9:16 ვიდეოსთვის.
         მიმართულება: "მელანქოლიური, რომანტიკული, ქალაქური ან ბუნებრივი სცენა".
@@ -70,6 +86,7 @@ class ThemeAgent:
         2. დაამატე ემოციური კონტექსტი.
         3. იყავი ლაკონიური! მაქსიმუმ 5-8 წინადადება.
         4. ენა: ქართული.
+        5. ტექსტი უნდა იყოს სრული, ბოლომდე მიყვანილი.
         """
         
         for service_id, name in providers:
@@ -87,20 +104,25 @@ class ThemeAgent:
                 text = ""
                 if service_id == "gemini_text":
                     genai.configure(api_key=k)
-                    text = genai.GenerativeModel(model).generate_content(prompt).text
+                    # max_output_tokens გაზრდილია
+                    text = genai.GenerativeModel(model).generate_content(prompt, generation_config={"max_output_tokens": 500}).text
                 elif service_id == "openrouter":
                     headers = {"Authorization": f"Bearer {k}", "HTTP-Referer": "http://localhost", "X-Title": "BeyondReality"}
-                    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 150}, timeout=20)
+                    # max_tokens გაზრდილია 400-მდე
+                    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 400}, timeout=20)
                     if resp.status_code == 200: text = resp.json()["choices"][0]["message"]["content"]
                     else: raise Exception(f"API Error {resp.status_code}")
                 elif service_id == "groq":
                     headers = {"Authorization": f"Bearer {k}", "Content-Type": "application/json"}
-                    resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 150}, timeout=20)
+                    # max_tokens გაზრდილია 500-მდე (Groq უფასოზე ხშირად აქვს ლიმიტი, მაგრამ 500 უნდა გასწიოს)
+                    resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 500}, timeout=20)
                     if resp.status_code == 200: text = resp.json()["choices"][0]["message"]["content"]
                     else: raise Exception(f"API Error {resp.status_code}")
                 
+                # ტექსტის გასუფთავება
+                final_text = clean_incomplete_text(text.strip().replace('"', ''))
                 self.log.add("ThemeAgent", f"✅ წარმატება ({name})", "success")
-                return text.strip().replace('"', '')
+                return final_text
             except Exception as e:
                 self.log.add("ThemeAgent", f"❌ შეცდომა {name}-ზე: {str(e)[:40]}", "error")
                 continue
@@ -119,7 +141,7 @@ class ScriptAgent:
             ("groq", "Groq")
         ]
         
-        prompt_content = f"დაწერე ემოციური მიკრო-ისტორია (2-3 წინ.) ქართულად. თემა: '{theme}'. სტილი: მელანქოლიური, კინემატოგრაფიული."
+        prompt_content = f"დაწერე ემოციური მიკრო-ისტორია (2-4 წინ.) ქართულად. თემა: '{theme}'. სტილი: მელანქოლიური, კინემატოგრაფიული. ტექსტი უნდა იყოს სრული, ბოლომდე მიყვანილი."
 
         for service_id, name in providers:
             k = self.vault.get_key(service_id, 0)
@@ -136,21 +158,23 @@ class ScriptAgent:
                 txt = ""
                 if service_id == "gemini_text":
                     genai.configure(api_key=k)
-                    txt = genai.GenerativeModel(model).generate_content(prompt_content, generation_config={"temperature":0.8}).text
+                    txt = genai.GenerativeModel(model).generate_content(prompt_content, generation_config={"temperature":0.8, "max_output_tokens": 500}).text
                 elif service_id == "openrouter":
                     headers = {"Authorization": f"Bearer {k}", "HTTP-Referer": "http://localhost", "X-Title": "BeyondReality"}
-                    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt_content}], "max_tokens": 150, "temperature": 0.8}, timeout=30)
+                    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt_content}], "max_tokens": 400, "temperature": 0.8}, timeout=30)
                     if resp.status_code == 200: txt = resp.json()["choices"][0]["message"]["content"]
                     else: raise Exception(f"Error {resp.status_code}")
                 elif service_id == "groq":
                     headers = {"Authorization": f"Bearer {k}", "Content-Type": "application/json"}
-                    resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt_content}], "max_tokens": 150, "temperature": 0.8}, timeout=30)
+                    # Groq-სთვის ლიმიტი მაქსიმალურად გავზარდეთ
+                    resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt_content}], "max_tokens": 1000, "temperature": 0.8}, timeout=30)
                     if resp.status_code == 200: txt = resp.json()["choices"][0]["message"]["content"]
                     else: raise Exception(f"Error {resp.status_code}")
                 
-                txt = txt.strip().replace('"','').replace('*','')
+                # ტექსტის გასუფთავება და დასრულება
+                final_txt = clean_incomplete_text(txt.strip().replace('"','').replace('*',''))
                 self.log.add("ScriptAgent", f"✅ წარმატება ({name})", "success")
-                return txt
+                return final_txt
             except Exception as e: 
                 self.log.add("ScriptAgent", f"❌ შეცდომა {name}-ზე: {str(e)[:40]}", "error")
                 continue
@@ -175,7 +199,9 @@ class VisualAgent:
     def __init__(self, vault, logger): self.vault=vault; self.log=logger
     def execute(self, theme, w, h):
         self.log.add("VisualAgent", "ვიზუალის გენერაცია...", "start")
+        # პრომპტი გავამარტივეთ, რათა უკეთ მუშაობდეს
         prompt=f"Cinematic vertical shot (9:16). {theme}. Moody, emotional, high detail, 8k."
+        
         k = self.vault.get_key("hf_image", 0)
         if k:
             try:
@@ -184,13 +210,23 @@ class VisualAgent:
             except Exception as e: 
                 self.log.add("VisualAgent", f"HF ჩავარდა: {str(e)[:30]}", "warning")
         
+        # Pollinations-სთვის ცდის მექანიზმი (Retry Loop)
         self.log.add("VisualAgent", "ვცდილობ Pollinations-ს...", "warning")
-        try:
-            img = Image.open(io.BytesIO(requests.get(f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width={w}&height={h}&nologo=true&seed={random.randint(1,99999)}&model=flux", timeout=60).content)).convert('RGB')
-            self.log.add("VisualAgent", f"✅ რეზოლუცია: {img.width}x{img.height} (Pollinations)", "end"); return img
-        except Exception as e: 
-            self.log.add("VisualAgent", f"❌ ვიზუალი ვერ შეიქმნა: {str(e)[:30]}", "error")
-            return None
+        for attempt in range(3):
+            try:
+                url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width={w}&height={h}&nologo=true&seed={random.randint(1,99999)}&model=flux"
+                self.log.add("VisualAgent", f"ცდა {attempt+1}/3...", indent=1)
+                resp = requests.get(url, timeout=90) # გაზრდილი ტაიმაუტი
+                if resp.status_code == 200:
+                    img = Image.open(io.BytesIO(resp.content)).convert('RGB')
+                    self.log.add("VisualAgent", f"✅ რეზოლუცია: {img.width}x{img.height} (Pollinations)", "end")
+                    return img
+            except Exception as e: 
+                self.log.add("VisualAgent", f"Pollinations შეცდომა: {str(e)[:30]}", "warning")
+                time.sleep(2) # მოლოდინი შემდეგ ცდამდე
+
+        self.log.add("VisualAgent", "❌ ვიზუალი ვერ შეიქმნა ყველა წყაროზე", "error")
+        return None
 
 class AssemblerAgent:
     def __init__(self, logger):
@@ -210,7 +246,7 @@ class AssemblerAgent:
         img_p, aud_p, out_p = map(os.path.abspath, [img_p, aud_p, out_p])
         fin_aud = aud_p
         
-        # 1. ხმის შერევა (თუ მუსიკა არსებობს)
+        # 1. ხმის შერევა
         if self.m_path and os.path.exists(self.m_path):
             self.log.add("AssemblerAgent", "🎵 ვურევ ნარაციას მუსიკასთან...", indent=1)
             fin_aud = os.path.join(CONFIG["OUTPUT_DIR"], "mixed.mp3")
@@ -225,15 +261,13 @@ class AssemblerAgent:
                 self.log.add("AssemblerAgent", "⚠️ შერევა ვერ მოხერხდა, ვიყენებთ მხოლოდ ხმას", "warning")
                 fin_aud = aud_p
 
-        # 2. ვიდეოს შექმნა + CINEMATIC ZOOM (Ken Burns Effect)
-        # ეს ქმნის ნამდვილ ვიდეო ფაილს, სადაც კამერა ნელა უახლოვდება (Zoom In)
+        # 2. ვიდეოს შექმნა + CINEMATIC ZOOM
         self.log.add("AssemblerAgent", "🎞️ ვადებ კინემატოგრაფიულ ზუმს (Slow Zoom)...", indent=1)
         
         cmd = [
             "/usr/bin/ffmpeg", "-y",
             "-loop", "1", "-i", img_p,
             "-i", fin_aud,
-            # ვიზუალური ეფექტი: ნელი ზუმი ცენტრიდან (1.0-დან 1.5-მდე)
             "-vf", "zoompan=z='min(zoom+0.0015,1.5)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920",
             "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k",
@@ -289,7 +323,7 @@ with st.sidebar:
         if st.button("🔐 სეიფი", use_container_width=True, type="primary" if st.session_state.show_vault else "secondary"):
             st.session_state.show_vault=True; st.rerun()
     st.divider()
-    st.caption("v6.0 | Cinematic Motion (Zoom Effect)")
+    st.caption("v7.0 | Fixed Text Cutoff & Image Retry")
 
 col_log = st.empty()
 if "logger_obj" not in st.session_state: st.session_state.logger_obj = HierarchicalLogger(col_log)
@@ -325,7 +359,7 @@ if st.session_state.show_vault:
 
 else:
     st.title("🎬 AI Cinematic Pipeline")
-    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Cinematic Motion v6.0*")
+    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Fixed Text & Image v7.0*")
     col_ui, col_log_area = st.columns([1, 1])
     with col_log_area: logger._render()
     
