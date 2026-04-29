@@ -11,8 +11,12 @@ import google.generativeai as genai
 import edge_tts
 import moviepy.editor as mp
 from huggingface_hub import InferenceClient
+import imageio # ffmpeg-ისთვის
 
 # ==================== კონფიგურაცია ====================
+# ffmpeg-ის გზის მითითება Streamlit Cloud-ისთვის
+os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
+
 CONFIG = {
     "GEMINI_API_KEY": st.secrets.get("GEMINI_API_KEY", ""),
     "HF_API_KEY": st.secrets.get("HF_API_KEY", ""),
@@ -77,7 +81,6 @@ class ScriptAgent:
         self.log = logger
 
     def _get_smart_models(self):
-        """ჭკვიანი მოდელის შერჩევა: ეკითხება Google-ს და ალაგებს პრიორიტეტით"""
         try:
             genai.configure(api_key=self.api_key)
             models = genai.list_models()
@@ -153,7 +156,6 @@ class VoiceAgent:
     async def execute(self, text, output_path):
         self.log.add("VoiceAgent", "დაიწყო ხმოვანი ნარაციის გენერაცია...", "start")
         
-        # ჭკვიანი სია: პირველი ქართულია, მეორე სარეზერვო
         voices = ["ka-GE-NinoNeural", "ka-GE-GiorgiNeural"]
         
         for voice in voices:
@@ -162,7 +164,6 @@ class VoiceAgent:
                 communicate = edge_tts.Communicate(text, voice)
                 await communicate.save(output_path)
                 
-                # თუ ფაილი შეიქმნა, ვამოწმებთ ხანგრძლივობას
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
                     dur = mp.AudioFileClip(output_path).duration
                     self.log.add("VoiceProcessor", f"შედეგი: {dur:.1f} წამი ✅ ({voice})", indent=2, sub="VoiceProcessor")
@@ -171,7 +172,7 @@ class VoiceAgent:
                 
             except Exception as e:
                 self.log.add("VoiceAgent", f"⚠️ {voice} ჩავარდა: {str(e)[:40]}", "warning")
-                continue # გადადის შემდეგ ხმაზე სიაში
+                continue
         
         self.log.add("VoiceAgent", "❌ ყველა ხმის ვარიანტი ჩავარდა.", "error")
         return None
@@ -223,20 +224,42 @@ class AssemblerAgent:
         self.music_path = os.path.join(CONFIG["OUTPUT_DIR"], "bg_music.mp3")
         if not os.path.exists(self.music_path):
             try:
-                with open(self.music_path, "wb") as f: f.write(requests.get(CONFIG["FALLBACK_MUSIC_URL"], timeout=30).content)
-            except: self.music_path = None
+                self.log.add("AssemblerAgent", "იტვირთავს ფონურ მუსიკას...", indent=1)
+                with open(self.music_path, "wb") as f: 
+                    f.write(requests.get(CONFIG["FALLBACK_MUSIC_URL"], timeout=30).content)
+                self.log.add("AssemblerAgent", "ფონური მუსიკა ჩამოტვირთულია.", indent=1)
+            except: 
+                self.log.add("AssemblerAgent", "ფონური მუსიკის ჩამოტვირთვა ვერ მოხერხდა.", "warning")
+                self.music_path = None
 
     def execute(self, image_path, audio_path, duration, output_path):
         self.log.add("AssemblerAgent", "დაიწყო ვიდეოს აწყობა...", "start")
+        
+        # 1. Validate Inputs - ეს აუცილებელია შეცდომის თავიდან ასაცილებლად
+        if not image_path or not os.path.exists(image_path):
+            self.log.add("AssemblerAgent", f"❌ სურათის ფაილი არ მოიძებნა: {image_path}", "error")
+            return None
+        if not audio_path or not os.path.exists(audio_path):
+            self.log.add("AssemblerAgent", f"❌ აუდიო ფაილი არ მოიძებნა: {audio_path}", "error")
+            return None
+            
         self.log.add("AssemblerAgent", "იტვირთავს კომპონენტებს...", indent=1)
         
         try:
+            # 2. Create Clips
             clip = mp.ImageClip(image_path).set_duration(duration)
             audio = mp.AudioFileClip(audio_path)
-            music = mp.AudioFileClip(self.music_path).volumex(0.25).set_duration(duration) if self.music_path else None
+            
+            # 3. Mix Audio
+            music = None
+            if self.music_path and os.path.exists(self.music_path):
+                music = mp.AudioFileClip(self.music_path).volumex(0.25).set_duration(duration)
+            
             final_audio = mp.CompositeAudioClip([audio, music]) if music else audio
             
             self.log.add("AssemblerAgent", "აერთიანებს მედია კომპონენტებს...", indent=1)
+            
+            # 4. Export
             video = clip.set_audio(final_audio)
             video.write_videofile(output_path, codec="libx264", audio_codec="aac", fps=24, logger=None)
             
@@ -305,7 +328,6 @@ with col_ui:
                 elif i == 2:
                     ts = datetime.now().strftime("%H%M%S")
                     path = os.path.join(CONFIG["OUTPUT_DIR"], f"voice_{ts}.mp3")
-                    # VoiceAgent აღარ იღებს ხმის სახელს, თავად ირჩევს
                     P.data["audio"] = asyncio.run(VoiceAgent(logger).execute(P.data["script"], path))
                 elif i == 3:
                     img = VisualAgent(CONFIG["HF_API_KEY"], logger).execute(P.data["theme"], CONFIG["VIDEO_WIDTH"], CONFIG["VIDEO_HEIGHT"])
