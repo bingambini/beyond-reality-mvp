@@ -2,66 +2,104 @@ import json
 import os
 import google.generativeai as genai
 import requests
+import re
 
-# კონფიგურაციის ფაილი, სადაც ინახება გასაღებები
 VAULT_FILE = "vault_config.json"
+
+# დეფოლტ სტრუქტურა: 5 ველი თითო კატეგორიაზე
+DEFAULT_CONFIG = {
+    "gemini_text": {
+        "label": "🧠 Google Gemini (ტექსტი/AI)",
+        "type": "key",
+        "count": 5,
+        "keys": [""] * 5
+    },
+    "hf_image": {
+        "label": "🎨 HuggingFace (ვიზუალი/სურათები)",
+        "type": "key",
+        "count": 5,
+        "keys": [""] * 5
+    },
+    "github_repos": {
+        "label": "🐙 GitHub რეპოზიტორიები (კოდი/სკრიპტები)",
+        "type": "link",
+        "count": 5,
+        "keys": [""] * 5
+    },
+    "other_apis": {
+        "label": "🔌 სხვა პლატფორმების API გასაღებები",
+        "type": "key",
+        "count": 5,
+        "keys": [""] * 5
+    }
+}
 
 class VaultManager:
     def __init__(self):
-        self.keys = {}
-        self._load_keys()
+        self.config = {}
+        self._load_config()
 
-    def _load_keys(self):
-        """იტვირთებს გასაღებებს JSON ფაილიდან"""
+    def _load_config(self):
         if os.path.exists(VAULT_FILE):
             try:
                 with open(VAULT_FILE, "r", encoding="utf-8") as f:
-                    self.keys = json.load(f)
+                    self.config = json.load(f)
+                # ახალი კატეგორიების ავტომატური დამატება თუ განახლდა სისტემა
+                for k, v in DEFAULT_CONFIG.items():
+                    if k not in self.config:
+                        self.config[k] = v
             except Exception:
-                self.keys = {}
+                self.config = DEFAULT_CONFIG
         else:
-            # დეფოლტ სტრუქტურა
-            self.keys = {
-                "gemini_text": "",
-                "hf_image": ""
-            }
+            self.config = DEFAULT_CONFIG
 
-    def save_key(self, service, key):
-        """ინახავს გასაღებს და ანახლებს JSON-ს"""
-        self.keys[service] = key
+    def save_config(self):
         try:
             with open(VAULT_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.keys, f, indent=4)
+                json.dump(self.config, f, indent=4, ensure_ascii=False)
             return True
         except Exception as e:
-            print(f"Vault Error: {e}")
+            print(f"Vault Save Error: {e}")
             return False
 
-    def get_key(self, service):
-        """აბრუნებს გასაღებს კონკრეტული სერვისისთვის"""
-        return self.keys.get(service, "")
+    def get_key(self, service_id, index=0):
+        """იღებს კონკრეტული სერვისის კონკრეტულ გასაღებს"""
+        try:
+            return self.config[service_id]["keys"][index]
+        except (KeyError, IndexError):
+            return ""
 
-    def validate_and_test(self, service, key):
-        """ამოწმებს: 1. არის თუ არა ცარიელი, 2. მუშაობს თუ არა API"""
-        if not key:
-            return False, "გასაღები ცარიელია"
+    def update_key(self, service_id, index, value):
+        """აახლებს კონკრეტულ გასაღებს კონფიგურაციაში"""
+        if service_id in self.config:
+            self.config[service_id]["keys"][index] = value
+
+    def validate_key(self, service_id, key):
+        """ამოწმებს გასაღების/ლინკის ვალიდურობას"""
+        if not key or not key.strip():
+            return False, "ველი ცარიელია"
         
         try:
-            if service == "gemini_text":
+            if service_id == "gemini_text":
                 genai.configure(api_key=key)
-                # ვცდილობთ მარტივ მოთხოვნას
                 model = genai.GenerativeModel("gemini-1.5-flash")
                 model.generate_content("ping", generation_config={"max_output_tokens": 1})
-                return True, "✅ გასაღები ვალიდურია და აქტიურია"
+                return True, "✅ ვალიდური და აქტიური"
             
-            elif service == "hf_image":
+            elif service_id == "hf_image":
                 resp = requests.get("https://huggingface.co/api/whoami-v2", headers={"Authorization": f"Bearer {key}"}, timeout=10)
                 if resp.status_code == 200:
-                    return True, "✅ HF ტოკენი ვალიდურია"
-                else:
-                    return False, f"❌ HF შეცდომა: {resp.status_code}"
+                    return True, "✅ ვალიდური ტოკენი"
+                return False, f"❌ HF შეცდომა: {resp.status_code}"
             
-            return False, "უცნობი სერვისი"
+            elif service_id == "github_repos":
+                if re.match(r'^https://github\.com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+/?$', key):
+                    return True, "✅ ვალიდური GitHub ლინკი"
+                return False, "❌ არასწორი GitHub URL ფორმატი"
             
+            else:
+                # სხვა API-ებისთვის ჯერ ბაზისური შემოწმება
+                return True, "✅ შენახულია"
+                
         except Exception as e:
-            return False, f"❌ შეცდომა: {str(e)[:50]}"
+            return False, f"❌ შეცდომა: {str(e)[:40]}"
