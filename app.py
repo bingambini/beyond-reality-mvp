@@ -45,82 +45,119 @@ class HierarchicalLogger:
             st.markdown("**📊 სისტემური ლოგები**")
             st.code("\n".join(self.entries[-40:]), language="text")
 
-# ==================== აგენტები ====================
+# ==================== აგენტები (Multi-Provider Fallback) ====================
 
-# ოპტიმიზებული ThemeAgent: 1 API ზარი, ლაკონიური ტექსტი
 class ThemeAgent:
     def __init__(self, vault, logger):
         self.vault = vault
         self.log = logger
 
     def execute(self):
-        self.log.add("ThemeAgent", "თემის შერჩევა (Optimized)...", "start")
-        k = self.vault.get_key("gemini_text", 0)
-        if not k: 
-            self.log.add("ThemeAgent", "❌ გასაღები არ არის", "error"); return None
+        self.log.add("ThemeAgent", "თემის შერჩევა (Multi-Provider)...", "start")
         
-        # მოდელის პოვნა
-        model, msg = self.vault.discover_and_test_model("gemini_text", k)
-        if not model: 
-            self.log.add("ThemeAgent", msg, "error"); return None
-            
-        genai.configure(api_key=k)
-        
-        # ერთიანი პრომპტი: ითხოვს ვიზუალს + ემოციას + მოკლე ფორმას
+        # პროვაიდერების სია (რიგითი მნიშვნელობით)
+        providers = [
+            ("gemini_text", "Google Gemini"),
+            ("openrouter", "OpenRouter"),
+            ("groq", "Groq")
+        ]
+
         prompt = """
         შექმენი უნიკალური კინემატოგრაფიული თემა 9:16 ვიდეოსთვის.
         მიმართულება: "მელანქოლიური, რომანტიკული, ქალაქური ან ბუნებრივი სცენა".
         
         მოითხოვნები:
         1. აღწერე ვიზუალი (განათება, კომპოზიცია, ფერები).
-        2. დაამატე ემოციური კონტექსტი (პერსონაჟის განცდა).
+        2. დაამატე ემოციური კონტექსტი.
         3. იყავი ლაკონიური! მაქსიმუმ 5-8 წინადადება.
         4. ენა: ქართული.
         """
         
-        try:
-            self.log.add("ThemeAgent", f"გენერაცია მოდელით: {model}", indent=1)
-            response = genai.GenerativeModel(model).generate_content(prompt)
-            final_text = response.text.strip().replace('"', '')
+        for service_id, name in providers:
+            k = self.vault.get_key(service_id, 0)
+            if not k: continue
             
-            self.log.add("ThemeAgent", f"მიღებული ტექსტი: \"{final_text[:40]}...\"", indent=1)
-            self.log.add("ThemeAgent", "✅ თემა დამტკიცებულია", "success")
-            return final_text
-        except Exception as e:
-            self.log.add("ThemeAgent", f"❌ შეცდომა: {str(e)[:50]}", "error")
-            return None
+            self.log.add("ThemeAgent", f"ვცდილობ {name}-ს...", indent=1)
+            model, msg = self.vault.discover_and_test_model(service_id, k)
+            
+            if not model:
+                self.log.add("ThemeAgent", f"{name} ვერ იმუშავა: {msg}", "warning")
+                continue
+            
+            try:
+                text = ""
+                if service_id == "gemini_text":
+                    genai.configure(api_key=k)
+                    text = genai.GenerativeModel(model).generate_content(prompt).text
+                elif service_id == "openrouter":
+                    headers = {"Authorization": f"Bearer {k}", "HTTP-Referer": "http://localhost", "X-Title": "BeyondReality"}
+                    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 150}, timeout=20)
+                    if resp.status_code == 200: text = resp.json()["choices"][0]["message"]["content"]
+                    else: raise Exception(f"API Error {resp.status_code}")
+                elif service_id == "groq":
+                    headers = {"Authorization": f"Bearer {k}", "Content-Type": "application/json"}
+                    resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 150}, timeout=20)
+                    if resp.status_code == 200: text = resp.json()["choices"][0]["message"]["content"]
+                    else: raise Exception(f"API Error {resp.status_code}")
+                
+                self.log.add("ThemeAgent", f"✅ წარმატება ({name})", "success")
+                return text.strip().replace('"', '')
+            except Exception as e:
+                self.log.add("ThemeAgent", f"❌ შეცდომა {name}-ზე: {str(e)[:40]}", "error")
+                continue
+
+        self.log.add("ThemeAgent", "❌ ყველა პროვაიდერი ჩავარდა", "error")
+        return None
 
 class ScriptAgent:
     def __init__(self, vault, logger): self.vault=vault; self.log=logger
     def execute(self, theme):
-        self.log.add("ScriptAgent", "სცენარის წერა...", "start")
-        k = self.vault.get_key("gemini_text", 0)
-        service_id = "gemini_text"
-        if not k:
-            k = self.vault.get_key("openrouter", 0)
-            service_id = "openrouter"
-        if not k: return None
+        self.log.add("ScriptAgent", "სცენარის წერა (Multi-Provider)...", "start")
         
-        model, msg = self.vault.discover_and_test_model(service_id, k)
-        self.log.add("ScriptAgent", msg, "success" if model else "error", indent=1)
-        if not model: return None
+        providers = [
+            ("gemini_text", "Google Gemini"),
+            ("openrouter", "OpenRouter"),
+            ("groq", "Groq")
+        ]
+        
+        prompt_content = f"დაწერე ემოციური მიკრო-ისტორია (2-3 წინ.) ქართულად. თემა: '{theme}'. სტილი: მელანქოლიური, კინემატოგრაფიული."
 
-        try:
-            txt = ""
-            if service_id == "gemini_text":
-                genai.configure(api_key=k)
-                txt = genai.GenerativeModel(model).generate_content(f"დაწერე ემოციური მიკრო-ისტორია (2-3 წინ.) ქართულად. თემა: '{theme}'. სტილი: მელანქოლიური, კინემატოგრაფიული.", generation_config={"temperature":0.8}).text
-            elif service_id == "openrouter":
-                headers = {"Authorization": f"Bearer {k}", "HTTP-Referer": "http://localhost", "X-Title": "BeyondReality"}
-                resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": f"დაწერე ემოციური მიკრო-ისტორია (2-3 წინ.) ქართულად. თემა: '{theme}'. სტილი: მელანქოლიური, კინემატოგრაფიული."}], "max_tokens": 150, "temperature": 0.8}, timeout=30)
-                if resp.status_code == 200: txt = resp.json()["choices"][0]["message"]["content"]
-                else: raise Exception(f"OpenRouter Error: {resp.status_code}")
+        for service_id, name in providers:
+            k = self.vault.get_key(service_id, 0)
+            if not k: continue
             
-            txt = txt.strip().replace('"','').replace('*','')
-            self.log.add("ScriptAgent", f"ტექსტი: \"{txt[:40]}...\"", indent=1)
-            self.log.add("ScriptAgent", "✅ სცენარი მზადაა.", "end"); return txt
-        except Exception as e: 
-            self.log.add("ScriptAgent", f"❌ {str(e)[:60]}", "error"); return None
+            self.log.add("ScriptAgent", f"ვცდილობ {name}-ს...", indent=1)
+            model, msg = self.vault.discover_and_test_model(service_id, k)
+            
+            if not model:
+                self.log.add("ScriptAgent", f"{name} ვერ იმუშავა: {msg}", "warning")
+                continue
+
+            try:
+                txt = ""
+                if service_id == "gemini_text":
+                    genai.configure(api_key=k)
+                    txt = genai.GenerativeModel(model).generate_content(prompt_content, generation_config={"temperature":0.8}).text
+                elif service_id == "openrouter":
+                    headers = {"Authorization": f"Bearer {k}", "HTTP-Referer": "http://localhost", "X-Title": "BeyondReality"}
+                    resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt_content}], "max_tokens": 150, "temperature": 0.8}, timeout=30)
+                    if resp.status_code == 200: txt = resp.json()["choices"][0]["message"]["content"]
+                    else: raise Exception(f"Error {resp.status_code}")
+                elif service_id == "groq":
+                    headers = {"Authorization": f"Bearer {k}", "Content-Type": "application/json"}
+                    resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json={"model": model, "messages": [{"role": "user", "content": prompt_content}], "max_tokens": 150, "temperature": 0.8}, timeout=30)
+                    if resp.status_code == 200: txt = resp.json()["choices"][0]["message"]["content"]
+                    else: raise Exception(f"Error {resp.status_code}")
+                
+                txt = txt.strip().replace('"','').replace('*','')
+                self.log.add("ScriptAgent", f"✅ წარმატება ({name})", "success")
+                return txt
+            except Exception as e: 
+                self.log.add("ScriptAgent", f"❌ შეცდომა {name}-ზე: {str(e)[:40]}", "error")
+                continue
+        
+        self.log.add("ScriptAgent", "❌ ყველა პროვაიდერი ჩავარდა", "error")
+        return None
 
 class VoiceAgent:
     def __init__(self, logger): self.log=logger
@@ -205,7 +242,7 @@ with st.sidebar:
         if st.button("🔐 სეიფი", use_container_width=True, type="primary" if st.session_state.show_vault else "secondary"):
             st.session_state.show_vault=True; st.rerun()
     st.divider()
-    st.caption("v4.2 | Optimized & Quota Safe")
+    st.caption("v5.0 | Unstoppable Multi-Provider")
 
 col_log = st.empty()
 if "logger_obj" not in st.session_state: st.session_state.logger_obj = HierarchicalLogger(col_log)
@@ -241,7 +278,7 @@ if st.session_state.show_vault:
 
 else:
     st.title("🎬 AI Cinematic Pipeline")
-    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Optimized v4.2*")
+    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Unstoppable v5.0*")
     col_ui, col_log_area = st.columns([1, 1])
     with col_log_area: logger._render()
     
@@ -257,17 +294,11 @@ else:
             is_done = i < P.step
             is_active = i == P.step
             
-            # ვიზუალი: დასრულებულ ნაბიჯებს ემატება ✅
             current_label = f"✅ {label}" if is_done else label
-            
-            # ღილაკის ტიპი: დასრულებული - ნაცრისფერი, აქტიური - ლურჯი, მომავალი - ნაცრისფერი
             btn_type = "secondary" if is_done else ("primary" if is_active else "secondary")
-            
-            # ღილაკი აქტიურია მხოლოდ მაშინ, როცა არის მიმდინარე ნაბიჯი
             disabled = not is_active 
             
             if st.button(current_label, key=f"btn_{i}", disabled=disabled, type=btn_type, use_container_width=True):
-                # ლოგიკის გაშვება
                 try:
                     if i==0: result = ThemeAgent(vault, logger).execute()
                     elif i==1: result = ScriptAgent(vault, logger).execute(P.data.get("theme"))
@@ -290,13 +321,12 @@ else:
                             result = AssemblerAgent(logger).execute(P.data["image"], P.data["audio"], dur, os.path.join(CONFIG["OUTPUT_DIR"], f"video_{ts}.mp4"))
                     elif i==5: result = StorageAgent(logger).execute(os.path.dirname(P.data.get("video") or "."))
                     
-                    # წარმატების შემოწმება
                     if result is not None:
                         P.data[key] = result
-                        P.step += 1 # გადადი შემდეგ ნაბიჯზე
-                        st.rerun() # გვერდის განახლება ღილაკების ფერის შესაცვლელად
+                        P.step += 1
+                        st.rerun()
                     else:
-                         logger.add("SYSTEM", "⚠️ ნაბიჯი ვერ დასრულდა. შეამოწმე ლოგები (შეიძლება ლიმიტი ამოიწურა).", "warning")
+                         logger.add("SYSTEM", "⚠️ ნაბიჯი ვერ დასრულდა. შეამოწმე ლოგები.", "warning")
 
                 except Exception as e: logger.add("SYSTEM", f"❌ შეცდომა {i+1}: {str(e)}", "error")
 
