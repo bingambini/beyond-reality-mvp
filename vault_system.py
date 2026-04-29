@@ -66,12 +66,9 @@ class VaultManager:
             return False, f"❌ შეცდომა: {str(e)[:40]}"
 
     # ============================================================
-    # ჭკვიანი მოდელის აღმოჩენა (გასწორებული ვერსია)
+    # ჭკვიანი მოდელის აღმოჩენა (განახლებული: დინამიური პოვნა)
     # ============================================================
     def discover_and_test_model(self, service_id, key):
-        """
-        ეკითხება პლატფორმას უფასო მოდელებს, ირჩევს საუკეთესოს და ტესტავს.
-        """
         if not key: return None, "გასაღები არ არის"
 
         try:
@@ -79,25 +76,23 @@ class VaultManager:
 
             if service_id == "gemini_text":
                 genai.configure(api_key=key)
+                # ვიღებთ ყველა ხელმისაწვდომ მოდელს
                 models = genai.list_models()
-                # ვპოულობთ ყველა მოდელს, რომელსაც შეუძლია ტექსტის გენერაცია
-                available_models = [m.name.replace("models/", "") for m in models if 'generateContent' in m.supported_generation_methods]
+                # ვფილტრავთ მხოლოდ იმ მოდელებს, რომელსაც შეუძლია ტექსტის გენერაცია
+                candidates = [m.name.replace("models/", "") for m in models if 'generateContent' in m.supported_generation_methods]
                 
-                # პრიორიტეტული სია (ყველაზე სტაბილურიდან)
-                priority_list = ["gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro", "gemini-1.5-flash"]
-                
-                # ვეძებთ პირველ მოდელს სიიდან, რომელიც ხელმისაწვდომია
-                for p_model in priority_list:
-                    if p_model in available_models:
-                        model_name = p_model
+                if not candidates:
+                    return None, "❌ ხელმისაწვდომი მოდელები ვერ მოიძებნა"
+
+                # ვცდილობთ ვიპოვოთ 'flash' ან 'pro' მოდელი უპირატესობით
+                for name in candidates:
+                    if 'flash' in name or 'pro' in name:
+                        model_name = name
                         break
                 
-                # თუ პრიორიტეტული ვერ ვიპოვეთ, ვიღებთ პირველსვე რაც არის
-                if not model_name and available_models:
-                    model_name = available_models[0]
-                
+                # თუ ვერ ვიპოვეთ, ვიღებთ პირველსვე რაც არის
                 if not model_name:
-                    return None, "❌ ხელმისაწვდომი მოდელები ვერ მოიძებნა"
+                    model_name = candidates[0]
 
                 # ტესტი
                 genai.GenerativeModel(model_name).generate_content("ping", generation_config={"max_output_tokens": 1})
@@ -108,16 +103,14 @@ class VaultManager:
                 resp = requests.get("https://openrouter.ai/api/v1/models", headers=headers, timeout=10)
                 if resp.status_code == 200:
                     data = resp.json().get("data", [])
-                    # ვფილტრავთ უფასო მოდელებს
                     free_models = [m for m in data if m.get("pricing", {}).get("prompt") == 0 and m.get("pricing", {}).get("completion") == 0]
                     if free_models:
-                        model_name = free_models[0]["id"] # ვირჩევთ პირველ უფასოს
+                        model_name = free_models[0]["id"]
                     else:
                         return None, "❌ უფასო მოდელები ვერ მოიძებნა"
                 else:
                     return None, f"❌ API შეცდომა: {resp.status_code}"
                 
-                # ტესტი
                 t_resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": model_name, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 5}, timeout=10)
                 if t_resp.status_code == 200:
                     return model_name, f"✅ გამოვლენილია: {model_name} (უფასო)"
