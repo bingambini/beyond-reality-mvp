@@ -19,7 +19,6 @@ CONFIG = {
     "OUTPUT_DIR": "./output",
     "VIDEO_WIDTH": 1080,
     "VIDEO_HEIGHT": 1920,
-    "TTS_VOICE": "ka-GE-NinoNeural",
     "FALLBACK_MUSIC_URL": "https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=ambient-piano-loop-114773.mp3"
 }
 os.makedirs(CONFIG["OUTPUT_DIR"], exist_ok=True)
@@ -41,7 +40,7 @@ class HierarchicalLogger:
     def _render(self):
         with self.container:
             st.markdown("**📊 სისტემური ლოგები (რეალურ დროში)**")
-            st.code("\n".join(self.entries[-30:]), language="text")
+            st.code("\n".join(self.entries[-35:]), language="text")
 
 # ==================== აგენტები ====================
 class ThemeAgent:
@@ -148,29 +147,34 @@ class ScriptAgent:
 
 
 class VoiceAgent:
-    def __init__(self, voice, logger):
-        self.voice = voice
+    def __init__(self, logger):
         self.log = logger
 
     async def execute(self, text, output_path):
         self.log.add("VoiceAgent", "დაიწყო ხმოვანი ნარაციის გენერაცია...", "start")
-        self.log.add("VoiceAgent", f"იყენებს TTS ძრავას: {self.voice}", indent=1)
-        self.log.add("VoiceAgent", "აგზავნის ტექსტს სინთეზატორში...", indent=1)
         
-        try:
-            comm = edge_tts.Communicate(text, self.voice)
-            await comm.save(output_path)
-            self.log.add("VoiceAgent", f"ფაილი შექმნილია: {os.path.basename(output_path)}", indent=1)
-            
-            dur = mp.AudioFileClip(output_path).duration
-            self.log.add("VoiceProcessor", "ამოწმებს აუდიო ხანგრძლივობას (>2წმ)", indent=1, sub="VoiceProcessor")
-            self.log.add("VoiceProcessor", f"შედეგი: {dur:.1f} წამი {'✅' if dur > 2 else '❌'}", indent=2, sub="VoiceProcessor")
-            
-            self.log.add("VoiceAgent", "დასრულდა. აუდიო მზადაა.", "end")
-            return output_path
-        except Exception as e:
-            self.log.add("VoiceAgent", f"TTS შეცდომა: {str(e)[:60]}", "error")
-            return None
+        # ჭკვიანი სია: პირველი ქართულია, მეორე სარეზერვო
+        voices = ["ka-GE-NinoNeural", "ka-GE-GiorgiNeural"]
+        
+        for voice in voices:
+            self.log.add("VoiceAgent", f"სცადის ხმას: {voice}", indent=1)
+            try:
+                communicate = edge_tts.Communicate(text, voice)
+                await communicate.save(output_path)
+                
+                # თუ ფაილი შეიქმნა, ვამოწმებთ ხანგრძლივობას
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    dur = mp.AudioFileClip(output_path).duration
+                    self.log.add("VoiceProcessor", f"შედეგი: {dur:.1f} წამი ✅ ({voice})", indent=2, sub="VoiceProcessor")
+                    self.log.add("VoiceAgent", f"✅ წარმატება! გამოყენებულია: {voice}", "end")
+                    return output_path
+                
+            except Exception as e:
+                self.log.add("VoiceAgent", f"⚠️ {voice} ჩავარდა: {str(e)[:40]}", "warning")
+                continue # გადადის შემდეგ ხმაზე სიაში
+        
+        self.log.add("VoiceAgent", "❌ ყველა ხმის ვარიანტი ჩავარდა.", "error")
+        return None
 
 
 class VisualAgent:
@@ -301,7 +305,8 @@ with col_ui:
                 elif i == 2:
                     ts = datetime.now().strftime("%H%M%S")
                     path = os.path.join(CONFIG["OUTPUT_DIR"], f"voice_{ts}.mp3")
-                    P.data["audio"] = asyncio.run(VoiceAgent(CONFIG["TTS_VOICE"], logger).execute(P.data["script"], path))
+                    # VoiceAgent აღარ იღებს ხმის სახელს, თავად ირჩევს
+                    P.data["audio"] = asyncio.run(VoiceAgent(logger).execute(P.data["script"], path))
                 elif i == 3:
                     img = VisualAgent(CONFIG["HF_API_KEY"], logger).execute(P.data["theme"], CONFIG["VIDEO_WIDTH"], CONFIG["VIDEO_HEIGHT"])
                     ts = datetime.now().strftime("%H%M%S")
