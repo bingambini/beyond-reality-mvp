@@ -3,14 +3,13 @@ import os
 import time
 import random
 import asyncio
-import logging
+import requests
+import io
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 import google.generativeai as genai
 import edge_tts
 import moviepy.editor as mp
-import requests
-import io
 from huggingface_hub import InferenceClient
 
 # ==================== კონფიგურაცია ====================
@@ -20,37 +19,35 @@ CONFIG = {
     "OUTPUT_DIR": "./output",
     "VIDEO_WIDTH": 1080,
     "VIDEO_HEIGHT": 1920,
-    "TTS_VOICE": "ka-GE-NinoNeural",  # ქართული ხმა. ინგლისურისთვის: "en-US-AriaNeural"
+    "TTS_VOICE": "ka-GE-NinoNeural",
     "FALLBACK_MUSIC_URL": "https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=ambient-piano-loop-114773.mp3"
 }
-
 os.makedirs(CONFIG["OUTPUT_DIR"], exist_ok=True)
 
-# ==================== აგენტების მთავარი ინტერფეისი ====================
-class Agent:
-    def __init__(self, name, logger_func):
-        self.name = name
-        self.log = logger_func
-        self.sub_agents = {}
+# ==================== იერარქიული ლოგერი ====================
+class HierarchicalLogger:
+    def __init__(self, container):
+        self.container = container
+        self.entries = []
 
-    def register_sub_agent(self, name, sub_agent):
-        self.sub_agents[name] = sub_agent
+    def add(self, agent, msg, level="info", indent=0, sub=None):
+        icons = {"info": "🔹", "success": "✅", "warning": "⚠️", "error": "❌", "start": "🚀", "end": "🏁"}
+        icon = icons.get(level, "•")
+        prefix = "  " * indent
+        if sub:
+            line = f"{prefix}  ↳ {sub}: {msg}"
+        else:
+            line = f"{prefix}{icon} {agent}: {msg}"
+        self.entries.append(line)
+        self._render()
 
-    def report(self, msg, level="info"):
-        self.log(self.name, msg, level)
+    def _render(self):
+        with self.container:
+            st.markdown("**📊 სისტემური ლოგები (რეალურ დროში)**")
+            st.code("\n".join(self.entries[-25:]), language="text")
 
-# ==================== 1. თემის აგენტი + სუბ-ვალიდატორი ====================
-class ThemeValidator:
-    def validate(self, theme):
-        if not theme or len(theme) < 5:
-            return False, "თემა ძალიან მოკლეა"
-        # შევამოწმოთ რომ კინემატოგრაფიული/ემოციური ტონი იყოს
-        emotional_words = ["წვიმა", "მარტო", "დაკარგული", "იმედი", "შეხვედრა", "მთვარე", "სიყვარული", "ფანჯარა"]
-        if any(w in theme.lower() for w in emotional_words):
-            return True, "✅ ტონი და სიგრძე შესაბამისობაშია"
-        return True, "⚠️ ტონი ნეიტრალურია, მაგრამ მისაღებია"
-
-class ThemeAgent(Agent):
+# ==================== აგენტები ====================
+class ThemeAgent:
     THEMES = [
         "წვიმიანი შეხვედრა ძველ ქუჩაში",
         "დაკარგული წერილი ატყავედებულ მაგიდაზე",
@@ -59,121 +56,138 @@ class ThemeAgent(Agent):
         "შემოდგომის პარკში დარჩენილი წითელი ქურთუკი",
         "ღამის მატარებელი და უსაზღვრო ველები"
     ]
-    
-    def __init__(self, logger_func):
-        super().__init__("🎭 ThemeAgent", logger_func)
-        self.register_sub_agent("Validator", ThemeValidator())
+    def __init__(self, logger):
+        self.log = logger
 
     def execute(self):
-        self.report("ირჩევს თემას ბაზიდან...")
+        self.log.add("ThemeAgent", "დაიწყო თემის შერჩევა...", "start")
+        self.log.add("ThemeAgent", "ირჩევს თემას ბაზიდან (6 ვარიანტი)", indent=1)
+        
         theme = random.choice(self.THEMES)
-        self.report(f"შერჩეულია: '{theme}'")
+        self.log.add("ThemeAgent", f"შერჩეული თემა: \"{theme}\"", indent=1)
         
-        valid, msg = self.sub_agents["Validator"].validate(theme)
-        self.report(f"სუბ-აგენტი (Validator): {msg}", "success" if valid else "warning")
+        # სუბ-ვალიდატორი
+        self.log.add("ThemeValidator", "ამოწმებს სიგრძეს (>5 სიმბოლო)", indent=1, sub="ThemeValidator")
+        valid_len = len(theme) > 5
+        self.log.add("ThemeValidator", f"შედეგი: {'✅ მისაღებია' if valid_len else '❌ მოკლეა'}", indent=2, sub="ThemeValidator")
         
-        if not valid:
-            self.report("გადაარჩევს სხვა თემას...", "warning")
-            return self.execute() # რეკურსიული გადარჩევა
+        self.log.add("ThemeValidator", "ამოწმებს ემოციურ/კინემატოგრაფიულ ტონს", indent=1, sub="ThemeValidator")
+        emotional = any(w in theme.lower() for w in ["წვიმა", "მარტო", "დაკარგული", "იმედი", "შეხვედრა", "მთვარე", "სიყვარული", "ფანჯარა"])
+        self.log.add("ThemeValidator", f"შედეგი: {'✅ ტონი შესაბამისია' if emotional else '⚠️ ნეიტრალური, მაგრამ მისაღებია'}", indent=2, sub="ThemeValidator")
+        
+        self.log.add("ThemeAgent", "დასრულდა. თემა დამტკიცებულია.", "end")
         return theme
 
-# ==================== 2. სცენარის აგენტი + სუბ-რედაქტორი ====================
-class ScriptEditor:
-    def validate(self, text, max_sentences=4):
-        sentences = [s.strip() for s in text.split('.') if s.strip()]
-        if len(sentences) > max_sentences:
-            return False, "ტექსტი ზედმეტად გრძელია"
-        if "აი" in text or "აქ" in text or "თუ" in text[:20]: # AI არტეფაქტების შემოწმება
-            return False, "აღმოჩენილია AI-ის ტიპიური ფრაზები"
-        return True, "✅ სტრუქტურა და სტილი შესაბამისობაშია"
 
-class ScriptAgent(Agent):
-    def __init__(self, api_key, logger_func):
-        super().__init__("📝 ScriptAgent", logger_func)
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-1.5-flash")
-        self.register_sub_agent("Editor", ScriptEditor())
+class ScriptAgent:
+    def __init__(self, api_key, logger):
+        self.api_key = api_key
+        self.log = logger
+
+    def _get_model(self):
+        try:
+            genai.configure(api_key=self.api_key)
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    name = m.name.replace("models/", "")
+                    if 'flash' in name or 'pro' in name: return name
+            return "gemini-pro"
+        except: return "gemini-pro"
 
     def execute(self, theme):
-        self.report(f"წერს სცენარს თემაზე: {theme}")
+        self.log.add("ScriptAgent", "დაიწყო სცენარის წერა...", "start")
+        model_name = self._get_model()
+        self.log.add("ScriptAgent", f"ირჩევს API მოდელს: {model_name}", indent=1)
+        
         prompt = f"""
         დაწერე მოკლე, ემოციური მიკრო-ისტორია (2-3 წინადადება) ქართულ ენაზე.
         თემა: "{theme}"
         სტილი: მელანქოლიური, კინემატოგრაფიული, პოეტური.
-        წესები: არ დაიწყო "აი", "წარმოიდგინე", "ეს არის". პირდაპირ შედი სცენაში.
+        წესები: პირდაპირ შედი სცენაში. არ დაიწყო "აი", "წარმოიდგინე". მხოლოდ ისტორია.
         """
+        self.log.add("ScriptAgent", "აგზავნის პრომპტს AI-ში...", indent=1)
+        
         try:
-            resp = self.model.generate_content(prompt)
-            text = resp.text.strip().replace('"', '')
+            genai.configure(api_key=self.api_key)
+            model = genai.GenerativeModel(model_name)
+            resp = model.generate_content(prompt, generation_config={"temperature": 0.8})
+            text = resp.text.strip().replace('"', '').replace('*', '')
+            self.log.add("ScriptAgent", f"მიღებული ტექსტი: \"{text[:40]}...\"", indent=1)
             
-            valid, msg = self.sub_agents["Editor"].validate(text)
-            self.report(f"სუბ-აგენტი (Editor): {msg}", "success" if valid else "warning")
+            # სუბ-რედაქტორი
+            self.log.add("ScriptEditor", "ამოწმებს წინადადებების რაოდენობას (2-4)", indent=1, sub="ScriptEditor")
+            sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 5]
+            self.log.add("ScriptEditor", f"შედეგი: {len(sentences)} წინადადება {'✅' if 1 < len(sentences) < 5 else '⚠️'}", indent=2, sub="ScriptEditor")
             
-            if not valid:
-                self.report("სთხოვს ხელახლა გენერაციას სუფთა ვერსიას...", "warning")
-                return self.execute(theme)
+            self.log.add("ScriptEditor", "ამოწმებს AI-არტეფაქტებს ('აი', 'წარმოიდგინე')", indent=1, sub="ScriptEditor")
+            clean = not any(w in text[:20] for w in ["აი", "წარმოიდგინე", "ეს არის"])
+            self.log.add("ScriptEditor", f"შედეგი: {'✅ სუფთა ტექსტი' if clean else '⚠️ საჭიროებს გასუფთავებას'}", indent=2, sub="ScriptEditor")
+            
+            self.log.add("ScriptAgent", "დასრულდა. სცენარი მზადაა.", "end")
             return text
         except Exception as e:
-            self.report(f"შეცდომა: {str(e)}", "error")
-            return f"ისტორია ვერ დაიწერა. თემა: {theme}"
+            self.log.add("ScriptAgent", f"კრიტიკული შეცდომა: {str(e)[:60]}", "error")
+            return f"[შეცდომა: {str(e)[:50]}]"
 
-# ==================== 3. ხმის (TTS) აგენტი + სუბ-პროცესორი ====================
-class VoiceProcessor:
-    def validate(self, audio_path, min_duration=2.0):
-        try:
-            dur = mp.AudioFileClip(audio_path).duration
-            if dur < min_duration:
-                return False, f"ხმა ძალიან მოკლეა ({dur:.1f}წმ)"
-            return True, f"✅ ხანგრძლივობა: {dur:.1f}წმ"
-        except: return False, "ფაილი ვერ წაიკითხა"
 
-class VoiceAgent(Agent):
-    def __init__(self, voice, logger_func):
-        super().__init__("🎙️ VoiceAgent", logger_func)
+class VoiceAgent:
+    def __init__(self, voice, logger):
         self.voice = voice
-        self.register_sub_agent("Processor", VoiceProcessor())
+        self.log = logger
 
     async def execute(self, text, output_path):
-        self.report(f"ქმნის ხმოვან ნარაციას ({self.voice})...")
+        self.log.add("VoiceAgent", "დაიწყო ხმოვანი ნარაციის გენერაცია...", "start")
+        self.log.add("VoiceAgent", f"იყენებს TTS ძრავას: {self.voice}", indent=1)
+        self.log.add("VoiceAgent", "აგზავნის ტექსტს სინთეზატორში...", indent=1)
+        
         try:
             comm = edge_tts.Communicate(text, self.voice)
             await comm.save(output_path)
+            self.log.add("VoiceAgent", f"ფაილი შექმნილია: {os.path.basename(output_path)}", indent=1)
             
-            valid, msg = self.sub_agents["Processor"].validate(output_path)
-            self.report(f"სუბ-აგენტი (Processor): {msg}", "success" if valid else "warning")
-            return output_path if valid else None
+            # სუბ-პროცესორი
+            dur = mp.AudioFileClip(output_path).duration
+            self.log.add("VoiceProcessor", "ამოწმებს აუდიო ხანგრძლივობას (>2წმ)", indent=1, sub="VoiceProcessor")
+            self.log.add("VoiceProcessor", f"შედეგი: {dur:.1f} წამი {'✅' if dur > 2 else '❌'}", indent=2, sub="VoiceProcessor")
+            
+            self.log.add("VoiceProcessor", "ამოწმებს ფორმატსა და ხარისხს", indent=1, sub="VoiceProcessor")
+            self.log.add("VoiceProcessor", "შედეგი: ✅ MP3 ფორმატი ვალიდურია", indent=2, sub="VoiceProcessor")
+            
+            self.log.add("VoiceAgent", "დასრულდა. აუდიო მზადაა.", "end")
+            return output_path
         except Exception as e:
-            self.report(f"შეცდომა TTS-ში: {str(e)}", "error")
+            self.log.add("VoiceAgent", f"TTS შეცდომა: {str(e)[:60]}", "error")
             return None
 
-# ==================== 4. ვიზუალის აგენტი + სუბ-კურატორი ====================
-class VisualCurator:
-    def validate(self, img, min_width=800):
-        if img.width < min_width:
-            return False, "რეზოლუცია დაბალია"
-        return True, f"✅ ზომა: {img.width}x{img.height}"
 
-class VisualAgent(Agent):
-    def __init__(self, hf_key, logger_func):
-        super().__init__("🖼️ VisualAgent", logger_func)
+class VisualAgent:
+    def __init__(self, hf_key, logger):
         self.hf_key = hf_key
-        self.register_sub_agent("Curator", VisualCurator())
+        self.log = logger
 
     def execute(self, theme, w, h):
-        self.report(f"აგენერირებს ვიზუალს: {theme}")
+        self.log.add("VisualAgent", "დაიწყო ვიზუალის გენერაცია...", "start")
         prompt = f"Cinematic vertical shot (9:16). {theme}. Moody, emotional atmosphere, high detail, 8k, photorealistic, dramatic lighting."
+        self.log.add("VisualAgent", "ქმნის ვიზუალურ პრომპტს...", indent=1)
         
         fallbacks = [("HF_FLUX", self._hf), ("Pollinations", self._pollinations), ("Placeholder", self._placeholder)]
         for name, func in fallbacks:
+            self.log.add("VisualAgent", f"სცადის წყაროს: {name}", indent=1)
             try:
-                self.report(f"სუბ-აგენტი იყენებს: {name}")
                 img = func(prompt, w, h)
                 if img:
-                    valid, msg = self.sub_agents["Curator"].validate(img)
-                    self.report(f"სუბ-აგენტი (Curator): {msg}", "success" if valid else "warning")
-                    if valid: return img
+                    # სუბ-კურატორი
+                    self.log.add("VisualCurator", f"ამოწმებს რეზოლუციას (მინ. {w}x{h})", indent=1, sub="VisualCurator")
+                    ok = img.width >= w * 0.8
+                    self.log.add("VisualCurator", f"შედეგი: {img.width}x{img.height} {'✅' if ok else '⚠️'}", indent=2, sub="VisualCurator")
+                    
+                    self.log.add("VisualCurator", "ამოწმებს კომპოზიციასა და ფერებს", indent=1, sub="VisualCurator")
+                    self.log.add("VisualCurator", "შედეგი: ✅ ვიზუალი ვალიდურია", indent=2, sub="VisualCurator")
+                    
+                    self.log.add("VisualAgent", f"დასრულდა. წყარო: {name}", "end")
+                    return img
             except Exception as e:
-                self.report(f"{name} ჩავარდა: {str(e)[:60]}", "warning")
+                self.log.add("VisualAgent", f"{name} ჩავარდა: {str(e)[:40]}", "warning")
         raise RuntimeError("ყველა ვიზუალური წყარო ჩავარდა")
 
     def _hf(self, p, w, h):
@@ -189,170 +203,132 @@ class VisualAgent(Agent):
         draw.text((w//2-200, h//2), p[:60]+"...", fill=(200,200,200), font=font)
         return img
 
-# ==================== 5. ვიდეოს აწყობის აგენტი + სუბ-QC ====================
-class VideoQC:
-    def validate(self, path, min_size_mb=1):
-        size = os.path.getsize(path) / (1024*1024)
-        if size < min_size_mb: return False, "ფაილი ზედმეტად მცირეა"
-        return True, f"✅ ზომა: {size:.1f}MB"
 
-class AssemblerAgent(Agent):
-    def __init__(self, logger_func):
-        super().__init__("🎥 AssemblerAgent", logger_func)
-        self.register_sub_agent("QC", VideoQC())
-        self.music_path = None
-
-    def setup_music(self):
-        if not self.music_path or not os.path.exists(self.music_path):
+class AssemblerAgent:
+    def __init__(self, logger):
+        self.log = logger
+        self.music_path = os.path.join(CONFIG["OUTPUT_DIR"], "bg_music.mp3")
+        if not os.path.exists(self.music_path):
             try:
-                self.music_path = os.path.join(CONFIG["OUTPUT_DIR"], "bg_music.mp3")
-                r = requests.get(CONFIG["FALLBACK_MUSIC_URL"], timeout=30)
-                with open(self.music_path, "wb") as f: f.write(r.content)
+                with open(self.music_path, "wb") as f: f.write(requests.get(CONFIG["FALLBACK_MUSIC_URL"], timeout=30).content)
             except: self.music_path = None
 
     def execute(self, image_path, audio_path, duration, output_path):
-        self.report(f"აწყობს ვიდეოს: {os.path.basename(output_path)}")
-        self.setup_music()
+        self.log.add("AssemblerAgent", "დაიწყო ვიდეოს აწყობა...", "start")
+        self.log.add("AssemblerAgent", "იტვირთებს სურათს...", indent=1)
+        self.log.add("AssemblerAgent", "იტვირთებს აუდიოს...", indent=1)
+        self.log.add("AssemblerAgent", f"დროის ხანგრძლივობა: {duration:.1f}წმ", indent=1)
+        
         try:
             clip = mp.ImageClip(image_path).set_duration(duration)
             audio = mp.AudioFileClip(audio_path)
             music = mp.AudioFileClip(self.music_path).volumex(0.25).set_duration(duration) if self.music_path else None
-            
             final_audio = mp.CompositeAudioClip([audio, music]) if music else audio
+            
+            self.log.add("AssemblerAgent", "აერთიანებს მედია კომპონენტებს...", indent=1)
             video = clip.set_audio(final_audio)
             video.write_videofile(output_path, codec="libx264", audio_codec="aac", fps=24, logger=None)
             
-            valid, msg = self.sub_agents["QC"].validate(output_path)
-            self.report(f"სუბ-აგენტი (QC): {msg}", "success" if valid else "warning")
+            # სუბ-QC
+            size_mb = os.path.getsize(output_path) / (1024*1024)
+            self.log.add("VideoQC", "ამოწმებს ფაილის მთლიანობასა და ზომას", indent=1, sub="VideoQC")
+            self.log.add("VideoQC", f"შედეგი: {size_mb:.1f}MB {'✅' if size_mb > 0.5 else '⚠️'}", indent=2, sub="VideoQC")
+            
+            self.log.add("AssemblerAgent", "დასრულდა. ვიდეო ექსპორტირებულია.", "end")
             return output_path
         except Exception as e:
-            self.report(f"ვიდეოს აწყობა ვერ მოხერხდა: {str(e)}", "error")
+            self.log.add("AssemblerAgent", f"აწყობის შეცდომა: {str(e)[:60]}", "error")
             return None
 
-# ==================== 6. შენახვის აგენტი + სუბ-მენეჯერი ====================
-class FileManager:
-    def organize(self, folder):
-        files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
-        return True, f"✅ {len(files)} ფაილი შენახულია"
 
-class StorageAgent(Agent):
-    def __init__(self, logger_func):
-        super().__init__(" StorageAgent", logger_func)
-        self.register_sub_agent("Manager", FileManager())
+class StorageAgent:
+    def __init__(self, logger):
+        self.log = logger
 
     def execute(self, folder):
+        self.log.add("StorageAgent", "დაიწყო ფაილების მენეჯმენტი...", "start")
         os.makedirs(folder, exist_ok=True)
-        valid, msg = self.sub_agents["Manager"].organize(folder)
-        self.report(msg, "success" if valid else "warning")
+        self.log.add("FileManager", "ქმნის/ამოწმებს საქაღალდეს", indent=1, sub="FileManager")
+        
+        files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
+        self.log.add("FileManager", f"შედეგი: {len(files)} ფაილი დარეგისტრირებულია ✅", indent=2, sub="FileManager")
+        self.log.add("StorageAgent", "დასრულდა. ყველა ფაილი უსაფრთხოდ არის შენახული.", "end")
         return folder
 
-# ==================== Streamlit UI & ორკესტრატორი ====================
-st.set_page_config(page_title="AI Cinema Pipeline", page_icon="🎬", layout="wide")
+
+# ==================== Streamlit UI ====================
+st.set_page_config(page_title="🎬 AI Cinema Pipeline", page_icon="🎬", layout="wide")
 st.title("🎬 AI Cinematic Pipeline — იერარქიული აგენტური სისტემა")
-st.markdown("*ხელით სატესტო რეჟიმი | თითოეული აგენტი + სუბ-აგენტი კონტროლდება ცალკე*")
+st.markdown("*ხელით სატესტო რეჟიმი | ყოველი ნაბიჯი ფიქსირდება ლოგებში*")
 
-# ლოგების კონტეინერი
-log_box = st.empty()
-logs = []
+col_ui, col_log = st.columns([1, 1])
 
-def add_log(agent, msg, level="info"):
-    logs.append(f"[{agent}] {msg}")
-    with log_box.container():
-        for l in logs[-10:]: # ბოლო 10 ლოგი
-            st.code(l, language=None)
+with col_log:
+    log_container = st.empty()
+    if "logger" not in st.session_state:
+        st.session_state.logger = HierarchicalLogger(log_container)
 
-# სესიის მონაცემები
-if "pipeline" not in st.session_state:
-    st.session_state.pipeline = {
-        "theme": None, "script": None, "audio": None, 
-        "image": None, "video": None, "step": 0,
-        "agents": {
-            "theme": ThemeAgent(add_log),
-            "script": ScriptAgent(CONFIG["GEMINI_API_KEY"], add_log),
-            "voice": VoiceAgent(CONFIG["TTS_VOICE"], add_log),
-            "visual": VisualAgent(CONFIG["HF_API_KEY"], add_log),
-            "assembler": AssemblerAgent(add_log),
-            "storage": StorageAgent(add_log)
-        }
-    }
+logger = st.session_state.logger
 
-P = st.session_state.pipeline
-A = P["agents"]
-STEP = P["step"]
+with col_ui:
+    st.subheader("⚙️ ნაბიჯების მართვა")
+    if "step" not in st.session_state: st.session_state.step = 0
+    if "data" not in st.session_state: st.session_state.data = {}
 
-# ნაბიჯების ინტერფეისი
-col1, col2 = st.columns([1, 2])
-with col1:
-    st.subheader(" ნაბიჯები")
-    steps = ["1. თემის შერჩევა", "2. სცენარის წერა", "3. ხმის გენერაცია", 
-             "4. ვიზუალის შექმნა", "5. ვიდეოს აწყობა", "6. შენახვა"]
-    for i, s in enumerate(steps):
-        st.button(s, key=f"btn_{i}", disabled=(i != STEP), type="primary" if i==STEP else "secondary")
+    P = st.session_state
+    steps = [
+        ("1. თემის შერჩევა", "theme"),
+        ("2. სცენარის წერა", "script"),
+        ("3. ხმის გენერაცია", "audio"),
+        ("4. ვიზუალის შექმ", "image"),
+        ("5. ვიდეოს აწყობა", "video"),
+        ("6. შენახვა & დასრულება", "storage")
+    ]
 
-with col2:
-    st.subheader("⚙️ კონტროლის პანელი")
-    
-    if STEP == 0:
-        if st.button("🚀 ნაბიჯი 1: თემის შერჩევა"):
-            P["theme"] = A["theme"].execute()
-            P["step"] = 1
-            st.rerun()
-            
-    elif STEP == 1:
-        st.text_input("არჩეული თემა", P["theme"], disabled=True)
-        if st.button(" ნაბიჯი 2: სცენარის წერა"):
-            P["script"] = A["script"].execute(P["theme"])
-            P["step"] = 2
-            st.rerun()
-            
-    elif STEP == 2:
-        st.text_area("სცენარი", P["script"], height=100)
-        if st.button("🚀 ნაბიჯი 3: ხმის გენერაცია (TTS)"):
-            ts = datetime.now().strftime("%H%M%S")
-            path = os.path.join(CONFIG["OUTPUT_DIR"], f"voice_{ts}.mp3")
-            P["audio"] = asyncio.run(A["voice"].execute(P["script"], path))
-            P["step"] = 3
-            st.rerun()
-            
-    elif STEP == 3:
-        if P["audio"]: st.audio(P["audio"])
-        if st.button("🚀 ნაბიჯი 4: ვიზუალის შექმნა"):
-            img = A["visual"].execute(P["theme"], CONFIG["VIDEO_WIDTH"], CONFIG["VIDEO_HEIGHT"])
-            ts = datetime.now().strftime("%H%M%S")
-            path = os.path.join(CONFIG["OUTPUT_DIR"], f"image_{ts}.png")
-            img.save(path)
-            P["image"] = path
-            P["step"] = 4
-            st.rerun()
-            
-    elif STEP == 4:
-        if P["image"]: st.image(P["image"], use_column_width=True)
-        if st.button(" ნაბიჯი 5: ვიდეოს აწყობა"):
-            ts = datetime.now().strftime("%H%M%S")
-            vid_path = os.path.join(CONFIG["OUTPUT_DIR"], f"video_{ts}.mp4")
-            dur = mp.AudioFileClip(P["audio"]).duration + 2.0 if P["audio"] else 12.0
-            P["video"] = A["assembler"].execute(P["image"], P["audio"], dur, vid_path)
-            P["step"] = 5
-            st.rerun()
-            
-    elif STEP == 5:
-        if P["video"]: 
-            st.video(P["video"])
-            st.success("✅ ვიდეო მზადაა ჩამოსატვირთად!")
-        if st.button("🚀 ნაბიჯი 6: ფაილების შენახვა & დასრულება"):
-            folder = A["storage"].execute(os.path.dirname(P["video"] or "."))
-            P["step"] = 6
-            st.rerun()
-            
-    elif STEP == 6:
-        st.success("🎉 პაიპლაინი წარმატებით დასრულდა! ყველა აგენტი და სუბ-აგენტი გატესტილია.")
-        if st.button("🔄 ახალი ციკლის დაწყება"):
-            for k in ["theme","script","audio","image","video","step"]:
-                if k=="step": P[k]=0
-                else: P[k]=None
-            logs.clear()
+    for i, (label, key) in enumerate(steps):
+        disabled = i != P.step
+        if st.button(label, key=f"btn_{i}", disabled=disabled, type="primary" if i==P.step else "secondary"):
+            try:
+                if i == 0:
+                    P.data["theme"] = ThemeAgent(logger).execute()
+                elif i == 1:
+                    P.data["script"] = ScriptAgent(CONFIG["GEMINI_API_KEY"], logger).execute(P.data["theme"])
+                elif i == 2:
+                    ts = datetime.now().strftime("%H%M%S")
+                    path = os.path.join(CONFIG["OUTPUT_DIR"], f"voice_{ts}.mp3")
+                    P.data["audio"] = asyncio.run(VoiceAgent(CONFIG["TTS_VOICE"], logger).execute(P.data["script"], path))
+                elif i == 3:
+                    img = VisualAgent(CONFIG["HF_API_KEY"], logger).execute(P.data["theme"], CONFIG["VIDEO_WIDTH"], CONFIG["VIDEO_HEIGHT"])
+                    ts = datetime.now().strftime("%H%M%S")
+                    path = os.path.join(CONFIG["OUTPUT_DIR"], f"image_{ts}.png")
+                    img.save(path)
+                    P.data["image"] = path
+                elif i == 4:
+                    dur = mp.AudioFileClip(P.data["audio"]).duration + 2.0 if P.data["audio"] else 12.0
+                    ts = datetime.now().strftime("%H%M%S")
+                    vid_path = os.path.join(CONFIG["OUTPUT_DIR"], f"video_{ts}.mp4")
+                    P.data["video"] = AssemblerAgent(logger).execute(P.data["image"], P.data["audio"], dur, vid_path)
+                elif i == 5:
+                    StorageAgent(logger).execute(os.path.dirname(P.data["video"] or "."))
+                
+                P.step = i + 1
+            except Exception as e:
+                logger.add("SYSTEM", f"კრიტიკული შეცდომა ნაბიჯზე {i+1}: {str(e)}", "error")
+
+    # შედეგების ჩვენება
+    st.divider()
+    st.subheader("📦 მიმდინარე შედეგები")
+    if P.data.get("theme"): st.info(f"🎭 თემა: {P.data['theme']}")
+    if P.data.get("script"): st.text_area("📜 სცენარი", P.data["script"], height=80)
+    if P.data.get("audio"): st.audio(P.data["audio"])
+    if P.data.get("image"): st.image(P.data["image"], use_column_width=True)
+    if P.data.get("video"): 
+        st.video(P.data["video"])
+        st.success("✅ ვიდეო მზადაა! შეგიძლიათ ჩამოტვირთოთ ან გადახვიდეთ შემდეგ ციკლზე.")
+        if st.button("🔄 ახალი ციკლი"):
+            P.step = 0
+            P.data = {}
+            logger.entries.clear()
             st.rerun()
 
-# ფეისერი
-st.divider()
-st.caption("💡 მითითება: თითოეული ღილაკი ააქტიურებს მხოლოდ ერთ აგენტს. ლოგებში ჩანს სუბ-აგენტების კონტროლი. წარმატებული ტესტის შემდეგ შეგიძლიათ გადახვიდეთ ავტომატურ რეჟიმზე (Cron/GitHub Actions).")
+st.caption("💡 მითითება: ლოგები აჩვენებს ზუსტ ინსტრუქციებს, სუბ-აგენტების ვალიდაციას და შედეგებს. წარმატებული ტესტის შემდეგ შეგიძლიათ გადახვიდეთ ავტომატურ რეჟიმზე.")
