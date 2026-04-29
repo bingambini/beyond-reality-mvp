@@ -45,37 +45,162 @@ class HierarchicalLogger:
     def _render(self):
         with self.container:
             st.markdown("**📊 სისტემური ლოგები (რეალურ დროში)**")
-            st.code("\n".join(self.entries[-35:]), language="text")
+            st.code("\n".join(self.entries[-40:]), language="text")
 
-# ==================== აგენტები ====================
-class ThemeAgent:
-    THEMES = [
-        "წვიმიანი შეხვედრა ძველ ქუჩაში",
-        "დაკარგული წერილი ატყავედებულ მაგიდაზე",
-        "მთვარის შუქზე სიარული ცარიელ სანაპიროზე",
-        "ფანჯრიდან დანახული უცნობი სილუეტი",
-        "შემოდგომის პარკში დარჩენილი წითელი ქურთუკი",
-        "ღამის მატარებელი და უსაზღვრო ველები"
-    ]
+# ==================== აგენტები (THEME SECTION REBUILT) ====================
+class ThemeResearcherAgent:
+    def __init__(self, api_key, logger):
+        self.api_key = api_key
+        self.log = logger
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel("gemini-1.5-flash")
+
+    def execute(self, direction):
+        self.log.add("ThemeResearcherAgent", f"იწყებს კვლევას მიმართულებით: {direction}", indent=1)
+        prompt = f"""
+        შენ ხარ კინემატოგრაფიული იდეების მკვლევარი. 
+        მიმართულება: "{direction}"
+        შექმენი 1 უნიკალური, ემოციური და ვიზუალურად მდიდარი თემა (კონცეფცია).
+        პასუხი უნდა იყოს მხოლოდ თემის სახელი/მოკლე აღწერა. არ დაამატო ახსნა.
+        """
+        try:
+            resp = self.model.generate_content(prompt)
+            raw_theme = resp.text.strip().replace('"', '')
+            self.log.add("ThemeResearcherAgent", f"ნაპოვნია ნედლი თემა: \"{raw_theme}\"", indent=1)
+            return raw_theme
+        except Exception as e:
+            self.log.add("ThemeResearcherAgent", f"კვლევა ვერ მოხერხდა: {str(e)[:50]}", "error")
+            return "წვიმიანი შეხვედრა ძველ ხიდზე" # Fallback
+
+class ThemeAgent1:
+    def __init__(self, api_key, logger):
+        self.api_key = api_key
+        self.log = logger
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel("gemini-1.5-flash")
+
+    def execute(self, raw_theme):
+        self.log.add("ThemeAgent1", f"იღებს ნედლ თემას: \"{raw_theme}\"", indent=1)
+        self.log.add("ThemeAgent1", "ამუშავებს ემოციურ კონტექსტს...", indent=1)
+        prompt = f"""
+        თემა: "{raw_theme}"
+        გაავრცე ეს კონცეფცია. დაამატე პერსონაჟის შინაგანი განცდა, ატმოსფერო და ემოციური ქვეტექსტი.
+        შეინარჩუნე მელანქოლიური/რომანტიკული ტონი. პასუხი იყოს 2-3 წინადადება.
+        """
+        try:
+            resp = self.model.generate_content(prompt)
+            processed = resp.text.strip().replace('"', '')
+            self.log.add("ThemeAgent1", f"დამუშავებული ვერსია მზადაა", indent=1)
+            return processed
+        except Exception as e:
+            self.log.add("ThemeAgent1", f"დამუშავება ვერ მოხერხდა: {str(e)[:50]}", "error")
+            return raw_theme
+
+class ThemeAgent2:
+    def __init__(self, api_key, logger):
+        self.api_key = api_key
+        self.log = logger
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel("gemini-1.5-flash")
+
+    def execute(self, processed_theme):
+        self.log.add("ThemeAgent2", "ამატებს კინემატოგრაფიულ ჩარჩოს...", indent=1)
+        prompt = f"""
+        ტექსტი: "{processed_theme}"
+        გარდაქმენი ეს ტექსტი კონკრეტულ ვიზუალურ სცენად 9:16 ვერტიკალური ვიდეოსთვის.
+        მიუთითე: კომპოზიცია, განათება, ფერების პალიტრა და კამერის კუთხე.
+        შეინარჩუნე ორიგინალი ემოცია. პასუხი იყოს მხოლოდ საბოლოო თემის ტექსტი.
+        """
+        try:
+            resp = self.model.generate_content(prompt)
+            cinematic = resp.text.strip().replace('"', '')
+            self.log.add("ThemeAgent2", "კინემატოგრაფიული ჩარჩო დამატებულია", indent=1)
+            return cinematic
+        except Exception as e:
+            self.log.add("ThemeAgent2", f"ჩარჩოს დამატება ვერ მოხერხდა: {str(e)[:50]}", "error")
+            return processed_theme
+
+class ThemeValidator1:
     def __init__(self, logger):
         self.log = logger
 
+    def check(self, theme):
+        self.log.add("ThemeValidator1", "ამოწმებს ტონსა და ემოციას...", indent=1, sub="ThemeValidator1")
+        emotional_words = ["წვიმა", "მარტო", "დაკარგული", "იმედი", "შეხვედრა", "მთვარე", "სიყვარული", "ფანჯარა", "ჩრდილი", "ხიდი"]
+        has_emotion = any(w in theme.lower() for w in emotional_words)
+        no_cliche = not any(w in theme[:20] for w in ["აი", "წარმოიდგინე", "ეს არის", "მოგესალმებით"])
+        
+        if has_emotion and no_cliche:
+            self.log.add("ThemeValidator1", "შედეგი: ✅ ტონი და ემოცია შესაბამისობაშია", indent=2, sub="ThemeValidator1")
+            return True, ""
+        else:
+            reason = "❌ აკლია ემოციური სიღრმე ან შეიცავს AI-კლიშეებს"
+            self.log.add("ThemeValidator1", f"შედეგი: {reason}", indent=2, sub="ThemeValidator1")
+            return False, reason
+
+class ThemeValidator2:
+    def __init__(self, logger):
+        self.log = logger
+
+    def check(self, theme):
+        self.log.add("ThemeValidator2", "ამოწმებს სიგრძესა და ვიზუალიზაციას...", indent=1, sub="ThemeValidator2")
+        sentences = [s.strip() for s in theme.split('.') if len(s.strip()) > 5]
+        len_ok = 1 <= len(sentences) <= 4
+        visual_ok = len(theme) > 15 # მინიმალური ვიზუალური აღწერა
+        
+        if len_ok and visual_ok:
+            self.log.add("ThemeValidator2", f"შედეგი: ✅ სტრუქტურა ({len(sentences)} წინ.) და ვიზუალი მისაღებია", indent=2, sub="ThemeValidator2")
+            return True, ""
+        else:
+            reason = "❌ ზედმეტად მოკლეა ან არ შეიცავს ვიზუალურ დეტალებს"
+            self.log.add("ThemeValidator2", f"შედეგი: {reason}", indent=2, sub="ThemeValidator2")
+            return False, reason
+
+class ThemeAgent: # MAIN COORDINATOR
+    def __init__(self, api_key, logger):
+        self.api_key = api_key
+        self.log = logger
+        self.researcher = ThemeResearcherAgent(api_key, logger)
+        self.agent1 = ThemeAgent1(api_key, logger)
+        self.agent2 = ThemeAgent2(api_key, logger)
+        self.validator1 = ThemeValidator1(logger)
+        self.validator2 = ThemeValidator2(logger)
+
     def execute(self):
-        self.log.add("ThemeAgent", "დაიწყო თემის შერჩევა...", "start")
-        self.log.add("ThemeAgent", "ირჩევს თემას ბაზიდან (6 ვარიანტი)", indent=1)
+        self.log.add("ThemeAgent", "დაიწყო თემის შერჩევის პროცესი...", "start")
+        self.log.add("ThemeAgent", "აყალიბებს შემოქმედებით მიმართულებას...", indent=1)
         
-        theme = random.choice(self.THEMES)
-        self.log.add("ThemeAgent", f"შერჩეული თემა: \"{theme}\"", indent=1)
+        direction = "მელანქოლიური, რომანტიკული, ქალაქური ან ბუნებრივი სცენა"
+        self.log.add("ThemeAgent", f"მიმართულება: \"{direction}\"", indent=1)
         
-        self.log.add("ThemeValidator", "ამოწმებს სიგრძესა და ემოციურ ტონს", indent=1, sub="ThemeValidator")
-        valid_len = len(theme) > 5
-        emotional = any(w in theme.lower() for w in ["წვიმა", "მარტო", "დაკარგული", "იმედი", "შეხვედრა", "მთვარე", "სიყვარული", "ფანჯარა"])
-        self.log.add("ThemeValidator", f"შედეგი: {'✅ სიგრძე და ტონი მისაღებია' if valid_len and emotional else '⚠️ ნეიტრალური, მაგრამ მისაღებია'}", indent=2, sub="ThemeValidator")
-        
-        self.log.add("ThemeAgent", "დასრულდა. თემა დამტკიცებულია.", "end")
-        return theme
+        max_retries = 2
+        for attempt in range(max_retries):
+            self.log.add("ThemeAgent", f"🔄 ციკლი {attempt+1}/{max_retries}", indent=1)
+            
+            # 1. Research
+            raw = self.researcher.execute(direction)
+            
+            # 2. Process (Agent1 -> Agent2)
+            processed = self.agent1.execute(raw)
+            final_candidate = self.agent2.execute(processed)
+            
+            # 3. Validate (Validator1 -> Validator2)
+            v1_ok, v1_msg = self.validator1.check(final_candidate)
+            v2_ok, v2_msg = self.validator2.check(final_candidate)
+            
+            if v1_ok and v2_ok:
+                self.log.add("ThemeAgent", f"✅ საბოლოო თემა დამტკიცებულია: \"{final_candidate}\"", "success")
+                return final_candidate
+            else:
+                feedback = f"{v1_msg} {v2_msg}"
+                self.log.add("ThemeAgent", f"⚠️ ვალიდაცია ვერ გაიარა. კორექცია: {feedback}", "warning")
+                # მომავალ ციკლში მიმართულებას ვამატებთ უკუკავშირს
+                direction += f" (შენიშვნა: {feedback})"
+                
+        self.log.add("ThemeAgent", "⚠️ მაქსიმალური ციკლები ამოიწურა. ვბრუნდებით ბოლო ვარიანტს.", "warning")
+        return final_candidate
 
-
+# ==================== დანარჩენი აგენტები (უცვლელი) ====================
 class ScriptAgent:
     def __init__(self, api_key, logger):
         self.api_key = api_key
@@ -245,7 +370,6 @@ class AssemblerAgent:
         
         final_audio_path = audio_path
         
-        # 1. ხმის შერევა (თუ მუსიკა არსებობს)
         if self.music_path and os.path.exists(self.music_path):
             final_audio_path = os.path.join(CONFIG["OUTPUT_DIR"], "mixed_audio.mp3")
             mix_cmd = [
@@ -264,7 +388,6 @@ class AssemblerAgent:
             else:
                 self.log.add("AssemblerAgent", "ხმა წარმატებით შერეულია.", indent=1)
 
-        # 2. ვიდეოს შექმნა FFmpeg-ით (ბევრად უფრო საიმედოა ვიდრე MoviePy)
         self.log.add("AssemblerAgent", "ქმნის ვიდეოს ffmpeg-ით...", indent=1)
         cmd = [
             "/usr/bin/ffmpeg", "-y",
@@ -339,7 +462,8 @@ with col_ui:
         if st.button(label, key=f"btn_{i}", disabled=disabled, type="primary" if i==P.step else "secondary"):
             try:
                 if i == 0:
-                    P.data["theme"] = ThemeAgent(logger).execute()
+                    # ახალი არქიტექტურის გამოძახება
+                    P.data["theme"] = ThemeAgent(CONFIG["GEMINI_API_KEY"], logger).execute()
                 elif i == 1:
                     P.data["script"] = ScriptAgent(CONFIG["GEMINI_API_KEY"], logger).execute(P.data["theme"])
                 elif i == 2:
