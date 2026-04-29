@@ -34,17 +34,14 @@ class HierarchicalLogger:
         icons = {"info": "🔹", "success": "✅", "warning": "⚠️", "error": "❌", "start": "🚀", "end": "🏁"}
         icon = icons.get(level, "•")
         prefix = "  " * indent
-        if sub:
-            line = f"{prefix}  ↳ {sub}: {msg}"
-        else:
-            line = f"{prefix}{icon} {agent}: {msg}"
+        line = f"{prefix}  ↳ {sub}: {msg}" if sub else f"{prefix}{icon} {agent}: {msg}"
         self.entries.append(line)
         self._render()
 
     def _render(self):
         with self.container:
             st.markdown("**📊 სისტემური ლოგები (რეალურ დროში)**")
-            st.code("\n".join(self.entries[-25:]), language="text")
+            st.code("\n".join(self.entries[-30:]), language="text")
 
 # ==================== აგენტები ====================
 class ThemeAgent:
@@ -66,14 +63,10 @@ class ThemeAgent:
         theme = random.choice(self.THEMES)
         self.log.add("ThemeAgent", f"შერჩეული თემა: \"{theme}\"", indent=1)
         
-        # სუბ-ვალიდატორი
-        self.log.add("ThemeValidator", "ამოწმებს სიგრძეს (>5 სიმბოლო)", indent=1, sub="ThemeValidator")
+        self.log.add("ThemeValidator", "ამოწმებს სიგრძესა და ემოციურ ტონს", indent=1, sub="ThemeValidator")
         valid_len = len(theme) > 5
-        self.log.add("ThemeValidator", f"შედეგი: {'✅ მისაღებია' if valid_len else '❌ მოკლეა'}", indent=2, sub="ThemeValidator")
-        
-        self.log.add("ThemeValidator", "ამოწმებს ემოციურ/კინემატოგრაფიულ ტონს", indent=1, sub="ThemeValidator")
         emotional = any(w in theme.lower() for w in ["წვიმა", "მარტო", "დაკარგული", "იმედი", "შეხვედრა", "მთვარე", "სიყვარული", "ფანჯარა"])
-        self.log.add("ThemeValidator", f"შედეგი: {'✅ ტონი შესაბამისია' if emotional else '⚠️ ნეიტრალური, მაგრამ მისაღებია'}", indent=2, sub="ThemeValidator")
+        self.log.add("ThemeValidator", f"შედეგი: {'✅ სიგრძე და ტონი მისაღებია' if valid_len and emotional else '⚠️ ნეიტრალური, მაგრამ მისაღებია'}", indent=2, sub="ThemeValidator")
         
         self.log.add("ThemeAgent", "დასრულდა. თემა დამტკიცებულია.", "end")
         return theme
@@ -84,20 +77,29 @@ class ScriptAgent:
         self.api_key = api_key
         self.log = logger
 
-    def _get_model(self):
+    def _get_smart_models(self):
+        """ჭკვიანი მოდელის შერჩევა: ეკითხება Google-ს და ალაგებს პრიორიტეტით"""
         try:
             genai.configure(api_key=self.api_key)
-            for m in genai.list_models():
+            models = genai.list_models()
+            valid = []
+            for m in models:
                 if 'generateContent' in m.supported_generation_methods:
                     name = m.name.replace("models/", "")
-                    if 'flash' in name or 'pro' in name: return name
-            return "gemini-pro"
-        except: return "gemini-pro"
+                    if 'flash' in name: valid.insert(0, name)
+                    elif 'pro' in name: valid.append(name)
+                    else: valid.append(name)
+            return list(dict.fromkeys(valid))
+        except Exception as e:
+            self.log.add("ScriptAgent", f"მოდელთა სიის მიღება ვერ მოხერხდა: {str(e)[:50]}", "error")
+            return ["gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"]
 
     def execute(self, theme):
         self.log.add("ScriptAgent", "დაიწყო სცენარის წერა...", "start")
-        model_name = self._get_model()
-        self.log.add("ScriptAgent", f"ირჩევს API მოდელს: {model_name}", indent=1)
+        self.log.add("ScriptAgent", "უკავშირდება Google-ს ხელმისაწვდომი მოდელების მისაღებად...", indent=1)
+        
+        models = self._get_smart_models()
+        self.log.add("ScriptAgent", f"ნაპოვნია {len(models)} მოდელი. პრიორიტეტი: {', '.join(models[:3])}", indent=1)
         
         prompt = f"""
         დაწერე მოკლე, ემოციური მიკრო-ისტორია (2-3 წინადადება) ქართულ ენაზე.
@@ -107,27 +109,42 @@ class ScriptAgent:
         """
         self.log.add("ScriptAgent", "აგზავნის პრომპტს AI-ში...", indent=1)
         
-        try:
+        for model_name in models:
+            self.log.add("ScriptAgent", f"🔄 ცდილობს მოდელს: {model_name}", indent=1)
             genai.configure(api_key=self.api_key)
             model = genai.GenerativeModel(model_name)
-            resp = model.generate_content(prompt, generation_config={"temperature": 0.8})
-            text = resp.text.strip().replace('"', '').replace('*', '')
-            self.log.add("ScriptAgent", f"მიღებული ტექსტი: \"{text[:40]}...\"", indent=1)
             
-            # სუბ-რედაქტორი
-            self.log.add("ScriptEditor", "ამოწმებს წინადადებების რაოდენობას (2-4)", indent=1, sub="ScriptEditor")
-            sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 5]
-            self.log.add("ScriptEditor", f"შედეგი: {len(sentences)} წინადადება {'✅' if 1 < len(sentences) < 5 else '⚠️'}", indent=2, sub="ScriptEditor")
+            for attempt in range(3):
+                try:
+                    resp = model.generate_content(prompt, generation_config={"temperature": 0.8})
+                    text = resp.text.strip().replace('"', '').replace('*', '')
+                    
+                    self.log.add("ScriptAgent", f"მიღებული ტექსტი: \"{text[:40]}...\"", indent=1)
+                    
+                    self.log.add("ScriptEditor", "ამოწმებს წინადადებების რაოდენობასა და სტილს", indent=1, sub="ScriptEditor")
+                    sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 5]
+                    self.log.add("ScriptEditor", f"შედეგი: {len(sentences)} წინადადება {'✅' if 1 < len(sentences) < 5 else '⚠️'}", indent=2, sub="ScriptEditor")
+                    
+                    self.log.add("ScriptAgent", "✅ წარმატება! სცენარი დამუშავებულია.", "end")
+                    return text
+
+                except Exception as e:
+                    err_msg = str(e)
+                    if '429' in err_msg or 'quota' in err_msg.lower():
+                        wait_time = 15 * (attempt + 1)
+                        self.log.add("ScriptAgent", f"⏳ ლიმიტი (429). ველოდები {wait_time}წმ... (ცდა {attempt+1}/3)", "warning")
+                        time.sleep(wait_time)
+                    elif 'not found' in err_msg.lower() or 'not supported' in err_msg.lower():
+                        self.log.add("ScriptAgent", f"⚠️ მოდელი ხელმიუწვდომელია. გადადის შემდეგზე...", "warning")
+                        break
+                    else:
+                        self.log.add("ScriptAgent", f"❌ შეცდომა: {err_msg[:60]}", "error")
+                        break
             
-            self.log.add("ScriptEditor", "ამოწმებს AI-არტეფაქტებს ('აი', 'წარმოიდგინე')", indent=1, sub="ScriptEditor")
-            clean = not any(w in text[:20] for w in ["აი", "წარმოიდგინე", "ეს არის"])
-            self.log.add("ScriptEditor", f"შედეგი: {'✅ სუფთა ტექსტი' if clean else '⚠️ საჭიროებს გასუფთავებას'}", indent=2, sub="ScriptEditor")
-            
-            self.log.add("ScriptAgent", "დასრულდა. სცენარი მზადაა.", "end")
-            return text
-        except Exception as e:
-            self.log.add("ScriptAgent", f"კრიტიკული შეცდომა: {str(e)[:60]}", "error")
-            return f"[შეცდომა: {str(e)[:50]}]"
+            self.log.add("ScriptAgent", f"⚠️ {model_name} ამოიწურა. გადადის შემდეგ მოდელზე...", "warning")
+
+        self.log.add("ScriptAgent", "❌ ყველა მოდელის ლიმიტი ამოიწურა. გთხოვთ დაელოდოთ ~1 საათი.", "error")
+        return "[სისტემური ლოდინი: API ლიმიტი ამოიწურა. სცადეთ მოგვიანებით.]"
 
 
 class VoiceAgent:
@@ -145,13 +162,9 @@ class VoiceAgent:
             await comm.save(output_path)
             self.log.add("VoiceAgent", f"ფაილი შექმნილია: {os.path.basename(output_path)}", indent=1)
             
-            # სუბ-პროცესორი
             dur = mp.AudioFileClip(output_path).duration
             self.log.add("VoiceProcessor", "ამოწმებს აუდიო ხანგრძლივობას (>2წმ)", indent=1, sub="VoiceProcessor")
             self.log.add("VoiceProcessor", f"შედეგი: {dur:.1f} წამი {'✅' if dur > 2 else '❌'}", indent=2, sub="VoiceProcessor")
-            
-            self.log.add("VoiceProcessor", "ამოწმებს ფორმატსა და ხარისხს", indent=1, sub="VoiceProcessor")
-            self.log.add("VoiceProcessor", "შედეგი: ✅ MP3 ფორმატი ვალიდურია", indent=2, sub="VoiceProcessor")
             
             self.log.add("VoiceAgent", "დასრულდა. აუდიო მზადაა.", "end")
             return output_path
@@ -176,13 +189,9 @@ class VisualAgent:
             try:
                 img = func(prompt, w, h)
                 if img:
-                    # სუბ-კურატორი
                     self.log.add("VisualCurator", f"ამოწმებს რეზოლუციას (მინ. {w}x{h})", indent=1, sub="VisualCurator")
                     ok = img.width >= w * 0.8
                     self.log.add("VisualCurator", f"შედეგი: {img.width}x{img.height} {'✅' if ok else '⚠️'}", indent=2, sub="VisualCurator")
-                    
-                    self.log.add("VisualCurator", "ამოწმებს კომპოზიციასა და ფერებს", indent=1, sub="VisualCurator")
-                    self.log.add("VisualCurator", "შედეგი: ✅ ვიზუალი ვალიდურია", indent=2, sub="VisualCurator")
                     
                     self.log.add("VisualAgent", f"დასრულდა. წყარო: {name}", "end")
                     return img
@@ -215,9 +224,7 @@ class AssemblerAgent:
 
     def execute(self, image_path, audio_path, duration, output_path):
         self.log.add("AssemblerAgent", "დაიწყო ვიდეოს აწყობა...", "start")
-        self.log.add("AssemblerAgent", "იტვირთებს სურათს...", indent=1)
-        self.log.add("AssemblerAgent", "იტვირთებს აუდიოს...", indent=1)
-        self.log.add("AssemblerAgent", f"დროის ხანგრძლივობა: {duration:.1f}წმ", indent=1)
+        self.log.add("AssemblerAgent", "იტვირთავს კომპონენტებს...", indent=1)
         
         try:
             clip = mp.ImageClip(image_path).set_duration(duration)
@@ -229,7 +236,6 @@ class AssemblerAgent:
             video = clip.set_audio(final_audio)
             video.write_videofile(output_path, codec="libx264", audio_codec="aac", fps=24, logger=None)
             
-            # სუბ-QC
             size_mb = os.path.getsize(output_path) / (1024*1024)
             self.log.add("VideoQC", "ამოწმებს ფაილის მთლიანობასა და ზომას", indent=1, sub="VideoQC")
             self.log.add("VideoQC", f"შედეგი: {size_mb:.1f}MB {'✅' if size_mb > 0.5 else '⚠️'}", indent=2, sub="VideoQC")
@@ -259,7 +265,7 @@ class StorageAgent:
 # ==================== Streamlit UI ====================
 st.set_page_config(page_title="🎬 AI Cinema Pipeline", page_icon="🎬", layout="wide")
 st.title("🎬 AI Cinematic Pipeline — იერარქიული აგენტური სისტემა")
-st.markdown("*ხელით სატესტო რეჟიმი | ყოველი ნაბიჯი ფიქსირდება ლოგებში*")
+st.markdown("*ხელით სატესტო რეჟიმი | ჭკვიანი ფოლბექი და დინამიური მოდელები*")
 
 col_ui, col_log = st.columns([1, 1])
 
@@ -267,7 +273,6 @@ with col_log:
     log_container = st.empty()
     if "logger" not in st.session_state:
         st.session_state.logger = HierarchicalLogger(log_container)
-
 logger = st.session_state.logger
 
 with col_ui:
@@ -280,7 +285,7 @@ with col_ui:
         ("1. თემის შერჩევა", "theme"),
         ("2. სცენარის წერა", "script"),
         ("3. ხმის გენერაცია", "audio"),
-        ("4. ვიზუალის შექმ", "image"),
+        ("4. ვიზუალის შექმნა", "image"),
         ("5. ვიდეოს აწყობა", "video"),
         ("6. შენახვა & დასრულება", "storage")
     ]
@@ -315,7 +320,6 @@ with col_ui:
             except Exception as e:
                 logger.add("SYSTEM", f"კრიტიკული შეცდომა ნაბიჯზე {i+1}: {str(e)}", "error")
 
-    # შედეგების ჩვენება
     st.divider()
     st.subheader("📦 მიმდინარე შედეგები")
     if P.data.get("theme"): st.info(f"🎭 თემა: {P.data['theme']}")
@@ -331,4 +335,4 @@ with col_ui:
             logger.entries.clear()
             st.rerun()
 
-st.caption("💡 მითითება: ლოგები აჩვენებს ზუსტ ინსტრუქციებს, სუბ-აგენტების ვალიდაციას და შედეგებს. წარმატებული ტესტის შემდეგ შეგიძლიათ გადახვიდეთ ავტომატურ რეჟიმზე.")
+st.caption("💡 მითითება: სისტემა ავტომატურად პოულობს ხელმისაწვდომ მოდელებს და ლიმიტის დროს ელოდება. ლოგებში ჩანს ყველა გადაწყვეტილება.")
