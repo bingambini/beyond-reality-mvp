@@ -46,81 +46,49 @@ class HierarchicalLogger:
             st.code("\n".join(self.entries[-40:]), language="text")
 
 # ==================== აგენტები ====================
-class ThemeResearcherAgent:
-    def __init__(self, vault, logger): self.vault=vault; self.log=logger
-    def execute(self, d):
-        self.log.add("ThemeResearcherAgent", f"კვლევა: {d}", indent=1)
-        k = self.vault.get_key("gemini_text", 0)
-        if not k: return None
-        
-        model, msg = self.vault.discover_and_test_model("gemini_text", k)
-        self.log.add("ThemeResearcherAgent", msg, "success" if model else "error", indent=1)
-        if not model: return None
-        
-        genai.configure(api_key=k)
-        try: 
-            return genai.GenerativeModel(model).generate_content(f"შექმენი 1 უნიკალური კინემატოგრაფიული თემა. მიმართულება: '{d}'.").text.strip().replace('"','')
-        except: return None
 
-class ThemeAgent1:
-    def __init__(self, vault, logger): self.vault=vault; self.log=logger
-    def execute(self, r):
-        self.log.add("ThemeAgent1", "ემოციური კონტექსტი...", indent=1)
-        k = self.vault.get_key("gemini_text", 0)
-        if not k: return r
-        model, msg = self.vault.discover_and_test_model("gemini_text", k)
-        if not model: return r
-        genai.configure(api_key=k)
-        try: 
-            return genai.GenerativeModel(model).generate_content(f"გაავრცე: '{r}'. დაამატე პერსონაჟის განცდა. 2-3 წინ.").text.strip().replace('"','')
-        except: return r
-
-class ThemeAgent2:
-    def __init__(self, vault, logger): self.vault=vault; self.log=logger
-    def execute(self, p):
-        self.log.add("ThemeAgent2", "კინემატოგრაფიული ჩარჩო...", indent=1)
-        k = self.vault.get_key("gemini_text", 0)
-        if not k: return p
-        model, msg = self.vault.discover_and_test_model("gemini_text", k)
-        if not model: return p
-        genai.configure(api_key=k)
-        try: 
-            return genai.GenerativeModel(model).generate_content(f"გარდაქმენი 9:16 ვიზუალურ სცენად: '{p}'. კომპოზიცია, განათება, ფერები.").text.strip().replace('"','')
-        except: return p
-
-class ThemeValidator1:
-    def __init__(self, logger): self.log=logger
-    def check(self, t):
-        self.log.add("ThemeValidator1", "ტონი/ემოცია...", indent=1, sub="V1")
-        ok=any(w in t.lower() for w in ["წვიმა","მარტო","დაკარგული","იმედი","შეხვედრა","მთვარე","სიყვარული","ფანჯარა","ჩრდილი","ხიდი","გზა","სიჩუმე"])
-        self.log.add("ThemeValidator1", f"შედეგი: {'✅' if ok else '❌'}", indent=2, sub="V1"); return ok
-
-class ThemeValidator2:
-    def __init__(self, logger): self.log=logger
-    def check(self, t):
-        self.log.add("ThemeValidator2", "სიგრძე/ვიზუალი...", indent=1, sub="V2")
-        s=[x.strip() for x in t.split('.') if len(x.strip())>5]
-        # FIX: ლიმიტი გაზრდილია 4-დან 20-მდე, რათა დეტალური თემები მიიღოს
-        ok=1<=len(s)<=20 and len(t)>15
-        self.log.add("ThemeValidator2", f"შედეგი: {'✅' if ok else '❌'} ({len(s)} წინ.)", indent=2, sub="V2"); return ok
-
+# ოპტიმიზებული ThemeAgent: 1 API ზარი, ლაკონიური ტექსტი
 class ThemeAgent:
     def __init__(self, vault, logger):
-        self.vault=vault; self.log=logger
-        self.res=ThemeResearcherAgent(vault,logger); self.a1=ThemeAgent1(vault,logger); self.a2=ThemeAgent2(vault,logger)
-        self.v1=ThemeValidator1(logger); self.v2=ThemeValidator2(logger)
+        self.vault = vault
+        self.log = logger
+
     def execute(self):
-        self.log.add("ThemeAgent", "თემის შერჩევა...", "start")
-        d="მელანქოლიური, რომანტიკული, ქალაქური ან ბუნებრივი სცენა"; final=None
-        for _ in range(2):
-            raw=self.res.execute(d)
-            if not raw: return None
-            p1=self.a1.execute(raw)
-            final=self.a2.execute(p1)
-            if self.v1.check(final) and self.v2.check(final):
-                self.log.add("ThemeAgent", "✅ თემა დამტკიცებულია", "success"); return final
-            d+=" (შენიშვნა: გააუმჯობესე ემოცია/სიგრძე)"
-        self.log.add("ThemeAgent", "⚠️ ციკლები ამოიწურა", "warning"); return final
+        self.log.add("ThemeAgent", "თემის შერჩევა (Optimized)...", "start")
+        k = self.vault.get_key("gemini_text", 0)
+        if not k: 
+            self.log.add("ThemeAgent", "❌ გასაღები არ არის", "error"); return None
+        
+        # მოდელის პოვნა
+        model, msg = self.vault.discover_and_test_model("gemini_text", k)
+        if not model: 
+            self.log.add("ThemeAgent", msg, "error"); return None
+            
+        genai.configure(api_key=k)
+        
+        # ერთიანი პრომპტი: ითხოვს ვიზუალს + ემოციას + მოკლე ფორმას
+        prompt = """
+        შექმენი უნიკალური კინემატოგრაფიული თემა 9:16 ვიდეოსთვის.
+        მიმართულება: "მელანქოლიური, რომანტიკული, ქალაქური ან ბუნებრივი სცენა".
+        
+        მოითხოვნები:
+        1. აღწერე ვიზუალი (განათება, კომპოზიცია, ფერები).
+        2. დაამატე ემოციური კონტექსტი (პერსონაჟის განცდა).
+        3. იყავი ლაკონიური! მაქსიმუმ 5-8 წინადადება.
+        4. ენა: ქართული.
+        """
+        
+        try:
+            self.log.add("ThemeAgent", f"გენერაცია მოდელით: {model}", indent=1)
+            response = genai.GenerativeModel(model).generate_content(prompt)
+            final_text = response.text.strip().replace('"', '')
+            
+            self.log.add("ThemeAgent", f"მიღებული ტექსტი: \"{final_text[:40]}...\"", indent=1)
+            self.log.add("ThemeAgent", "✅ თემა დამტკიცებულია", "success")
+            return final_text
+        except Exception as e:
+            self.log.add("ThemeAgent", f"❌ შეცდომა: {str(e)[:50]}", "error")
+            return None
 
 class ScriptAgent:
     def __init__(self, vault, logger): self.vault=vault; self.log=logger
@@ -237,7 +205,7 @@ with st.sidebar:
         if st.button("🔐 სეიფი", use_container_width=True, type="primary" if st.session_state.show_vault else "secondary"):
             st.session_state.show_vault=True; st.rerun()
     st.divider()
-    st.caption("v4.1 | Fixed Validator & Button Flow")
+    st.caption("v4.2 | Optimized & Quota Safe")
 
 col_log = st.empty()
 if "logger_obj" not in st.session_state: st.session_state.logger_obj = HierarchicalLogger(col_log)
@@ -273,7 +241,7 @@ if st.session_state.show_vault:
 
 else:
     st.title("🎬 AI Cinematic Pipeline")
-    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Smart Discovery v4.1*")
+    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Optimized v4.2*")
     col_ui, col_log_area = st.columns([1, 1])
     with col_log_area: logger._render()
     
@@ -286,11 +254,6 @@ else:
         steps=[("1. თემის შერჩევა","theme"),("2. სცენარის წერა","script"),("3. ხმის გენერაცია","audio"),("4. ვიზუალის შექმნა","image"),("5. ვიდეოს აწყობა","video"),("6. შენახვა","storage")]
 
         for i, (label, key) in enumerate(steps):
-            # ლოგიკა: 
-            # is_done (i < P.step) -> მწვანე/ჩექმარქიანი, ჩაბნელებული
-            # is_active (i == P.step) -> ლურჯი/აქტიური
-            # locked (i > P.step) -> ნაცრისფერი, ჩაბნელებული
-            
             is_done = i < P.step
             is_active = i == P.step
             
@@ -333,7 +296,7 @@ else:
                         P.step += 1 # გადადი შემდეგ ნაბიჯზე
                         st.rerun() # გვერდის განახლება ღილაკების ფერის შესაცვლელად
                     else:
-                         logger.add("SYSTEM", "⚠️ ნაბიჯი ვერ დასრულდა. შეამოწმე ლოგები.", "warning")
+                         logger.add("SYSTEM", "⚠️ ნაბიჯი ვერ დასრულდა. შეამოწმე ლოგები (შეიძლება ლიმიტი ამოიწურა).", "warning")
 
                 except Exception as e: logger.add("SYSTEM", f"❌ შეცდომა {i+1}: {str(e)}", "error")
 
