@@ -5,20 +5,18 @@ import random
 import asyncio
 import requests
 import io
+import subprocess
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 import google.generativeai as genai
 import edge_tts
 import moviepy.editor as mp
-import moviepy.config as mpy_config
 from huggingface_hub import InferenceClient
 import imageio.plugins.ffmpeg
 
 # ==================== კონფიგურაცია ====================
-# კრიტიკული: ffmpeg-ის გზის მითითება
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
 os.environ["IMAGEIO_FFMPEG_BINARY"] = "/usr/bin/ffmpeg"
-mpy_config.change_settings({"FFMPEG_BINARY": "/usr/bin/ffmpeg"})
 
 CONFIG = {
     "GEMINI_API_KEY": st.secrets.get("GEMINI_API_KEY", ""),
@@ -168,7 +166,6 @@ class VoiceAgent:
                 await communicate.save(output_path)
                 
                 if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    # FIX: ვკეტავთ კლიპს ხანგრძლივობის წაკითხვის შემდეგ
                     temp_clip = mp.AudioFileClip(output_path)
                     dur = temp_clip.duration
                     temp_clip.close()
@@ -240,55 +237,57 @@ class AssemblerAgent:
                 self.music_path = None
 
     def execute(self, image_path, audio_path, duration, output_path):
-        self.log.add("AssemblerAgent", "დაიწყო ვიდეოს აწყობა...", "start")
+        self.log.add("AssemblerAgent", "დაიწყო ვიდეოს აწყობა (FFmpeg)...", "start")
         
-        self.log.add("AssemblerAgent", f"🔍 შემომავალი აუდიო გზა: '{audio_path}'", indent=1)
-        
-        if not audio_path or str(audio_path).strip() == "":
-            self.log.add("AssemblerAgent", "❌ აუდიო გზა ცარიელია! ვიდეოს აწყობა შეუძლებელია.", "error")
-            return None
-            
         image_path = os.path.abspath(image_path)
         audio_path = os.path.abspath(audio_path)
         output_path = os.path.abspath(output_path)
         
-        self.log.add("AssemblerAgent", f"📷 სურათი: {os.path.basename(image_path)} (არსებობს: {os.path.exists(image_path)})", indent=1)
-        self.log.add("AssemblerAgent", f"🎙️ ხმა: {os.path.basename(audio_path)} (არსებობს: {os.path.exists(audio_path)})", indent=1)
+        final_audio_path = audio_path
+        
+        # 1. ხმის შერევა (თუ მუსიკა არსებობს)
+        if self.music_path and os.path.exists(self.music_path):
+            final_audio_path = os.path.join(CONFIG["OUTPUT_DIR"], "mixed_audio.mp3")
+            mix_cmd = [
+                "/usr/bin/ffmpeg", "-y",
+                "-i", audio_path,
+                "-i", self.music_path,
+                "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2",
+                "-c:a", "libmp3lame", "-q:a", "2",
+                final_audio_path
+            ]
+            self.log.add("AssemblerAgent", "ურევს ხმას ფონურ მუსიკასთან...", indent=1)
+            res = subprocess.run(mix_cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                self.log.add("AssemblerAgent", f"შერევა ვერ მოხერხდა, ვიყენებთ მხოლოდ ხმას.", "warning")
+                final_audio_path = audio_path
+            else:
+                self.log.add("AssemblerAgent", "ხმა წარმატებით შერეულია.", indent=1)
 
-        if not os.path.exists(image_path):
-            self.log.add("AssemblerAgent", f"❌ სურათის ფაილი ვერ მოიძებნა: {image_path}", "error")
-            return None
-        if not os.path.exists(audio_path):
-            self.log.add("AssemblerAgent", f"❌ ხმის ფაილი ვერ მოიძებნა: {audio_path}", "error")
-            return None
-
-        try:
-            clip = mp.ImageClip(image_path).set_duration(duration)
-            audio = mp.AudioFileClip(audio_path)
-            
-            music = None
-            if self.music_path and os.path.exists(self.music_path):
-                music = mp.AudioFileClip(self.music_path).volumex(0.25).set_duration(duration)
-            
-            final_audio = mp.CompositeAudioClip([audio, music]) if music else audio
-            
-            self.log.add("AssemblerAgent", "აერთიანებს მედია კომპონენტებს...", indent=1)
-            video = clip.set_audio(final_audio)
-            video.write_videofile(output_path, codec="libx264", audio_codec="aac", fps=24, logger=None)
-            
-            # FIX: ვკეტავთ კლიპებს რესურსების გასათავისუფლებლად
-            audio.close()
-            if music: music.close()
-            clip.close()
-            
+        # 2. ვიდეოს შექმნა FFmpeg-ით (ბევრად უფრო საიმედოა ვიდრე MoviePy)
+        self.log.add("AssemblerAgent", "ქმნის ვიდეოს ffmpeg-ით...", indent=1)
+        cmd = [
+            "/usr/bin/ffmpeg", "-y",
+            "-loop", "1",
+            "-i", image_path,
+            "-i", final_audio_path,
+            "-c:v", "libx264",
+            "-tune", "stillimage",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-pix_fmt", "yuv420p",
+            "-shortest",
+            output_path
+        ]
+        
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0:
             size_mb = os.path.getsize(output_path) / (1024*1024)
-            self.log.add("VideoQC", "ამოწმებს ფაილის მთლიანობასა და ზომას", indent=1, sub="VideoQC")
-            self.log.add("VideoQC", f"შედეგი: {size_mb:.1f}MB {'✅' if size_mb > 0.5 else '⚠️'}", indent=2, sub="VideoQC")
-            
+            self.log.add("VideoQC", f"შედეგი: {size_mb:.1f}MB ✅", indent=2, sub="VideoQC")
             self.log.add("AssemblerAgent", "დასრულდა. ვიდეო ექსპორტირებულია.", "end")
             return output_path
-        except Exception as e:
-            self.log.add("AssemblerAgent", f"აწყობის შეცდომა: {str(e)[:60]}", "error")
+        else:
+            self.log.add("AssemblerAgent", f"ffmpeg შეცდომა: {res.stderr[:60]}", "error")
             return None
 
 
@@ -357,7 +356,6 @@ with col_ui:
                     if not P.data.get("audio"):
                         logger.add("SYSTEM", "❌ ხმის ფაილი არ არსებობს. ვიდეო ვერ აიწყობა.", "error")
                     else:
-                        # FIX: ვკეტავთ კლიპს ხანგრძლივობის წაკითხვის შემდეგ
                         temp_audio = mp.AudioFileClip(P.data["audio"])
                         dur = temp_audio.duration + 2.0
                         temp_audio.close()
