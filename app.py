@@ -45,7 +45,7 @@ class HierarchicalLogger:
             st.markdown("**📊 სისტემური ლოგები**")
             st.code("\n".join(self.entries[-40:]), language="text")
 
-# ==================== აგენტები (ჭკვიანი მოდელით) ====================
+# ==================== აგენტები ====================
 class ThemeResearcherAgent:
     def __init__(self, vault, logger): self.vault=vault; self.log=logger
     def execute(self, d):
@@ -53,7 +53,6 @@ class ThemeResearcherAgent:
         k = self.vault.get_key("gemini_text", 0)
         if not k: return "წვიმიანი ქალაქის სცენა (გასაღები არ არის)"
         
-        # ჭკვიანი ძიება
         model, msg = self.vault.discover_and_test_model("gemini_text", k)
         self.log.add("ThemeResearcherAgent", msg, "success" if model else "error", indent=1)
         if not model: return "შეცდომა მოდელის პოვნაში"
@@ -123,25 +122,17 @@ class ScriptAgent:
     def __init__(self, vault, logger): self.vault=vault; self.log=logger
     def execute(self, theme):
         self.log.add("ScriptAgent", "სცენარის წერა...", "start")
-        
-        # აქ შეიძლება გამოვიყენოთ სხვა გასაღებიც, მაგალითად Groq ან OpenRouter თუ Gemini არ მუშაობს
-        # ჯერ ვცდილობთ Gemini-ს
         k = self.vault.get_key("gemini_text", 0)
         service_id = "gemini_text"
-        
-        # თუ Gemini ცარიელია, ვცდილობთ OpenRouter-ს
         if not k:
             k = self.vault.get_key("openrouter", 0)
             service_id = "openrouter"
-        
         if not k: return "[შეცდომა: არცერთი გასაღები არ არის სეიფში]"
         
-        # ჭკვიანი ძიება
         model, msg = self.vault.discover_and_test_model(service_id, k)
         self.log.add("ScriptAgent", msg, "success" if model else "error", indent=1)
         if not model: return "[შეცდომა: მოდელი ვერ მოიძებნა]"
 
-        # გენერაცია
         try:
             txt = ""
             if service_id == "gemini_text":
@@ -178,14 +169,12 @@ class VisualAgent:
         self.log.add("VisualAgent", "ვიზუალის გენერაცია...", "start")
         prompt=f"Cinematic vertical shot (9:16). {theme}. Moody, emotional, high detail, 8k."
         k = self.vault.get_key("hf_image", 0)
-        # HuggingFace-ისთვის ჯერ ვამოწმებთ ტოკენს
         if k:
             try:
                 img = InferenceClient(api_key=k).text_to_image(prompt, model="black-forest-labs/FLUX.1-schnell", width=w, height=h)
                 self.log.add("VisualAgent", "✅ (HF_FLUX)", "end"); return img
             except: pass
         
-        # ფოლბექი Pollinations
         self.log.add("VisualAgent", "HF ჩავარდა, ვცდილობ Pollinations-ს...", "warning")
         try:
             img = Image.open(io.BytesIO(requests.get(f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width={w}&height={h}&nologo=true&seed={random.randint(1,99999)}&model=flux", timeout=60).content)).convert('RGB')
@@ -244,7 +233,7 @@ with st.sidebar:
         if st.button("🔐 სეიფი", use_container_width=True, type="primary" if st.session_state.show_vault else "secondary"):
             st.session_state.show_vault=True; st.rerun()
     st.divider()
-    st.caption("v3.0 | Smart Discovery & Strict Flow")
+    st.caption("v3.1 | Smart Model Discovery Fixed")
 
 col_log = st.empty()
 if "logger_obj" not in st.session_state: st.session_state.logger_obj = HierarchicalLogger(col_log)
@@ -252,7 +241,7 @@ logger = st.session_state.logger_obj
 
 if st.session_state.show_vault:
     st.title("🔐 ცენტრალური API სეიფი")
-    st.markdown("აქ მართავთ ყველა პლატფორმის გასაღებსა და ლინკებს. სისტემა ავტომატურად ირჩევს მუშა გასაღებს.")
+    st.markdown("აქ მართავთ ყველა პლატფორმის გასაღებსა და ლინკებს.")
     
     for sid, sd in vault.config.items():
         with st.expander(f"{sd['label']}", expanded=True):
@@ -280,7 +269,7 @@ if st.session_state.show_vault:
 
 else:
     st.title("🎬 AI Cinematic Pipeline")
-    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Smart Discovery v3.0*")
+    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Smart Discovery v3.1*")
     col_ui, col_log_area = st.columns([1, 1])
     with col_log_area: logger._render()
     
@@ -290,17 +279,16 @@ else:
         if "data" not in st.session_state: st.session_state.data = {}
         P = st.session_state
         
-        # ნაბიჯების სია
         steps=[("1. თემის შერჩევა","theme"),("2. სცენარის წერა","script"),("3. ხმის გენერაცია","audio"),("4. ვიზუალის შექმნა","image"),("5. ვიდეოს აწყობა","video"),("6. შენახვა","storage")]
 
         for i, (label, key) in enumerate(steps):
-            # ლოგიკა: ღილაკი აქტიურია მხოლოდ მაშინ, როცა i == P.step
             is_active = (i == P.step)
             is_done = (i < P.step)
             
-            # ტიპი და ჩართულობა
+            # ღილაკის ვიზუალი
             btn_type = "primary" if is_active else ("success" if is_done else "secondary")
-            disabled = not is_active and not is_done # მომავალი ნაბიჯები ჩაკეტილია
+            # ღილაკი ჩაბნელებულია თუ არ არის აქტიური და არ არის დასრულებული (ანუ მომავალი ნაბიჯებია)
+            disabled = not is_active and not is_done 
             
             if st.button(label, key=f"btn_{i}", disabled=disabled, type=btn_type, use_container_width=True):
                 try:
@@ -322,8 +310,7 @@ else:
                             P.data["video"]=AssemblerAgent(logger).execute(P.data["image"], P.data["audio"], dur, os.path.join(CONFIG["OUTPUT_DIR"], f"video_{ts}.mp4"))
                     elif i==5: StorageAgent(logger).execute(os.path.dirname(P.data["video"] or "."))
                     
-                    # თუ წარმატებულია, გადავდივართ შემდეგ ნაბიჯზე
-                    # თუ შეცდომაა (მაგ. None დაბრუნდა), P.step არ იზრდება
+                    # თუ შედეგი არის (არ არის None), გადავდივართ შემდეგ ნაბიჯზე
                     if P.data.get(key) is not None:
                         P.step = i+1
                     else:
