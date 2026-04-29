@@ -55,12 +55,12 @@ class ThemeResearcherAgent:
         
         model, msg = self.vault.discover_and_test_model("gemini_text", k)
         self.log.add("ThemeResearcherAgent", msg, "success" if model else "error", indent=1)
-        if not model: return "შეცდომა მოდელის პოვნაში"
+        if not model: return None # Return None on failure so step doesn't complete
         
         genai.configure(api_key=k)
         try: 
             return genai.GenerativeModel(model).generate_content(f"შექმენი 1 უნიკალური კინემატოგრაფიული თემა. მიმართულება: '{d}'.").text.strip().replace('"','')
-        except: return "დაკარგული წერილი მაგიდაზე"
+        except: return None
 
 class ThemeAgent1:
     def __init__(self, vault, logger): self.vault=vault; self.log=logger
@@ -110,9 +110,12 @@ class ThemeAgent:
         self.v1=ThemeValidator1(logger); self.v2=ThemeValidator2(logger)
     def execute(self):
         self.log.add("ThemeAgent", "თემის შერჩევა...", "start")
-        d="მელანქოლიური, რომანტიკული, ქალაქური ან ბუნებრივი სცენა"; final="წვიმიანი ქალაქის სცენა"
+        d="მელანქოლიური, რომანტიკული, ქალაქური ან ბუნებრივი სცენა"; final=None
         for _ in range(2):
-            raw=self.res.execute(d); p1=self.a1.execute(raw); final=self.a2.execute(p1)
+            raw=self.res.execute(d)
+            if not raw: return None # Stop if researcher fails
+            p1=self.a1.execute(raw)
+            final=self.a2.execute(p1)
             if self.v1.check(final) and self.v2.check(final):
                 self.log.add("ThemeAgent", "✅ თემა დამტკიცებულია", "success"); return final
             d+=" (შენიშვნა: გააუმჯობესე ემოცია/სიგრძე)"
@@ -127,11 +130,11 @@ class ScriptAgent:
         if not k:
             k = self.vault.get_key("openrouter", 0)
             service_id = "openrouter"
-        if not k: return "[შეცდომა: არცერთი გასაღები არ არის სეიფში]"
+        if not k: return None
         
         model, msg = self.vault.discover_and_test_model(service_id, k)
         self.log.add("ScriptAgent", msg, "success" if model else "error", indent=1)
-        if not model: return "[შეცდომა: მოდელი ვერ მოიძებნა]"
+        if not model: return None
 
         try:
             txt = ""
@@ -148,7 +151,7 @@ class ScriptAgent:
             self.log.add("ScriptAgent", f"ტექსტი: \"{txt[:40]}...\"", indent=1)
             self.log.add("ScriptAgent", "✅ სცენარი მზადაა.", "end"); return txt
         except Exception as e: 
-            self.log.add("ScriptAgent", f"❌ {str(e)[:60]}", "error"); return "[შეცდომა]"
+            self.log.add("ScriptAgent", f"❌ {str(e)[:60]}", "error"); return None
 
 class VoiceAgent:
     def __init__(self, logger): self.log=logger
@@ -181,7 +184,7 @@ class VisualAgent:
             self.log.add("VisualAgent", "✅ (Pollinations)", "end"); return img
         except: 
             self.log.add("VisualAgent", "❌ ვიზუალი ვერ შეიქმნა", "error")
-            raise RuntimeError("ვიზუალი ვერ შეიქმნა")
+            return None
 
 class AssemblerAgent:
     def __init__(self, logger):
@@ -233,7 +236,7 @@ with st.sidebar:
         if st.button("🔐 სეიფი", use_container_width=True, type="primary" if st.session_state.show_vault else "secondary"):
             st.session_state.show_vault=True; st.rerun()
     st.divider()
-    st.caption("v3.1 | Smart Model Discovery Fixed")
+    st.caption("v4.0 | Strict Flow & Auto Model Fix")
 
 col_log = st.empty()
 if "logger_obj" not in st.session_state: st.session_state.logger_obj = HierarchicalLogger(col_log)
@@ -269,7 +272,7 @@ if st.session_state.show_vault:
 
 else:
     st.title("🎬 AI Cinematic Pipeline")
-    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Smart Discovery v3.1*")
+    st.markdown("*ავტომატური კონტენტის ფაბრიკა | Smart Discovery v4.0*")
     col_ui, col_log_area = st.columns([1, 1])
     with col_log_area: logger._render()
     
@@ -282,39 +285,53 @@ else:
         steps=[("1. თემის შერჩევა","theme"),("2. სცენარის წერა","script"),("3. ხმის გენერაცია","audio"),("4. ვიზუალის შექმნა","image"),("5. ვიდეოს აწყობა","video"),("6. შენახვა","storage")]
 
         for i, (label, key) in enumerate(steps):
-            is_active = (i == P.step)
-            is_done = (i < P.step)
+            # ლოგიკა: 
+            # is_done (i < P.step) -> მწვანე/ჩექმარქიანი, ჩაბნელებული
+            # is_active (i == P.step) -> ლურჯი/აქტიური
+            # locked (i > P.step) -> ნაცრისფერი, ჩაბნელებული
             
-            # ღილაკის ვიზუალი
-            btn_type = "primary" if is_active else ("success" if is_done else "secondary")
-            # ღილაკი ჩაბნელებულია თუ არ არის აქტიური და არ არის დასრულებული (ანუ მომავალი ნაბიჯებია)
-            disabled = not is_active and not is_done 
+            is_done = i < P.step
+            is_active = i == P.step
             
-            if st.button(label, key=f"btn_{i}", disabled=disabled, type=btn_type, use_container_width=True):
+            # ვიზუალი
+            current_label = f"✅ {label}" if is_done else label
+            btn_type = "secondary" if is_done else ("primary" if is_active else "secondary")
+            
+            # ღილაკი აქტიურია მხოლოდ მაშინ, როცა არის მიმდინარე ნაბიჯი
+            # წინა (Done) ნაბიჯები ჩაბნელებულია, რომ პროგრესი დავაფიქსიროთ
+            disabled = not is_active 
+            
+            if st.button(current_label, key=f"btn_{i}", disabled=disabled, type=btn_type, use_container_width=True):
+                # ლოგიკის გაშვება
                 try:
-                    if i==0: P.data["theme"]=ThemeAgent(vault, logger).execute()
-                    elif i==1: P.data["script"]=ScriptAgent(vault, logger).execute(P.data["theme"])
+                    if i==0: result = ThemeAgent(vault, logger).execute()
+                    elif i==1: result = ScriptAgent(vault, logger).execute(P.data.get("theme"))
                     elif i==2:
                         ts=datetime.now().strftime("%H%M%S")
-                        P.data["audio"]=asyncio.run(VoiceAgent(logger).execute(P.data["script"], os.path.join(CONFIG["OUTPUT_DIR"], f"voice_{ts}.mp3")))
+                        result = asyncio.run(VoiceAgent(logger).execute(P.data.get("script"), os.path.join(CONFIG["OUTPUT_DIR"], f"voice_{ts}.mp3")))
                     elif i==3:
-                        img=VisualAgent(vault, logger).execute(P.data["theme"], CONFIG["VIDEO_WIDTH"], CONFIG["VIDEO_HEIGHT"])
-                        ts=datetime.now().strftime("%H%M%S")
-                        path=os.path.join(CONFIG["OUTPUT_DIR"], f"image_{ts}.png")
-                        img.save(path); P.data["image"]=path
+                        img = VisualAgent(vault, logger).execute(P.data.get("theme"), CONFIG["VIDEO_WIDTH"], CONFIG["VIDEO_HEIGHT"])
+                        if img:
+                            ts=datetime.now().strftime("%H%M%S")
+                            path=os.path.join(CONFIG["OUTPUT_DIR"], f"image_{ts}.png")
+                            img.save(path); result = path
+                        else: result = None
                     elif i==4:
-                        if not P.data.get("audio"): logger.add("SYSTEM", "❌ ხმა არ არსებობს", "error")
+                        if not P.data.get("audio"): 
+                            logger.add("SYSTEM", "❌ ხმა არ არსებობს", "error"); result = None
                         else:
                             dur=mp.AudioFileClip(P.data["audio"]).duration+2.0; mp.AudioFileClip(P.data["audio"]).close()
                             ts=datetime.now().strftime("%H%M%S")
-                            P.data["video"]=AssemblerAgent(logger).execute(P.data["image"], P.data["audio"], dur, os.path.join(CONFIG["OUTPUT_DIR"], f"video_{ts}.mp4"))
-                    elif i==5: StorageAgent(logger).execute(os.path.dirname(P.data["video"] or "."))
+                            result = AssemblerAgent(logger).execute(P.data["image"], P.data["audio"], dur, os.path.join(CONFIG["OUTPUT_DIR"], f"video_{ts}.mp4"))
+                    elif i==5: result = StorageAgent(logger).execute(os.path.dirname(P.data.get("video") or "."))
                     
-                    # თუ შედეგი არის (არ არის None), გადავდივართ შემდეგ ნაბიჯზე
-                    if P.data.get(key) is not None:
-                        P.step = i+1
+                    # წარმატების შემოწმება
+                    if result is not None:
+                        P.data[key] = result
+                        P.step += 1 # გადადი შემდეგ ნაბიჯზე
+                        st.rerun() # გვერდის განახლება ღილაკების ფერის შესაცვლელად
                     else:
-                         logger.add("SYSTEM", "⚠️ ნაბიჯი ვერ დასრულდა. გთხოვთ სცადოთ თავიდან.", "warning")
+                         logger.add("SYSTEM", "⚠️ ნაბიჯი ვერ დასრულდა. შეამოწმე ლოგები.", "warning")
 
                 except Exception as e: logger.add("SYSTEM", f"❌ შეცდომა {i+1}: {str(e)}", "error")
 
@@ -326,6 +343,6 @@ else:
         if P.data.get("image"): st.image(P.data["image"], use_column_width=True)
         if P.data.get("video"): 
             st.video(P.data["video"]); st.success("✅ ვიდეო მზადაა!")
-            if st.button("🔄 ახალი ციკლი"): P.step, P.data, logger.entries = 0, {}, []; st.rerun()
+            if st.button("🔄 ახალი ციკლი (Reset)"): P.step, P.data, logger.entries = 0, {}, []; st.rerun()
 
     st.caption("💡 მითითება: გასაღებები მართვება მარცხენა მენიუში 'სეიფი' ტაბით.")
