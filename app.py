@@ -24,11 +24,14 @@ if "pipeline_logs" not in st.session_state:
 # ==================== 2. გვერდითა პანელი (Sidebar) ====================
 with st.sidebar:
     st.header("🎛️ მართვა")
-    if st.button("▶️ გაუშვი მთლიანი ნაკადი"):
+    
+    # დავამატეთ key="btn_run" რათა თავიდან ავიცილოთ Duplicate ID
+    if st.button("▶️ გაუშვი მთლიანი ნაკადი", key="btn_run_pipeline"):
         st.session_state.run_pipeline = True
         st.session_state.pipeline_logs = [] # ვასუფთავებთ ძველ ლოგებს
         st.rerun()
-    if st.button("🧹 ლოგების გასუფთავება"):
+        
+    if st.button("🧹 ლოგების გასუფთავება", key="btn_clear_logs"):
         st.session_state.pipeline_logs = []
         st.rerun()
 
@@ -50,7 +53,6 @@ st.divider()
 st.subheader("📊 რეალურ დროის ლოგები")
 log_container = st.empty()
 
-# ლოგერის კლასი (ინახავს ლოგებს სესიაში, რომ არ წაიშალოს)
 class StreamlitLogger:
     def __init__(self, container):
         self.container = container
@@ -62,7 +64,7 @@ class StreamlitLogger:
         with self.container:
             st.code("\n".join(st.session_state.pipeline_logs[-60:]), language="text")
 
-# ==================== 5. პაიპლაინის გადავადებული შესრულება ====================
+# ==================== 5. პაიპლაინის შესრულება ====================
 if st.session_state.run_pipeline and engine:
     engine.logger = StreamlitLogger(log_container)
     for node in engine.nodes.values():
@@ -72,20 +74,19 @@ if st.session_state.run_pipeline and engine:
         success = engine.execute()
 
     st.toast("🎉 წარმატება!" if success else "❌ ვერ დასრულდა", icon="✅" if success else "🚫")
-    st.session_state.run_pipeline = False # დროშის გათიშვა (ლოგები რჩება ეკრანზე)
+    st.session_state.run_pipeline = False 
 
 # ==================== 6. 📂 OUTPUT ფაილების ბრაუზერი, წაშლა & ჩამოტვირთვა ====================
 st.divider()
 with st.expander("📂 დაგენერირებული ფაილების ნახვა & მართვა", expanded=True):
     output_dir = "./output"
     if os.path.exists(output_dir):
-        # დალაგება თარიღის მიხედვით (უახლესი ზემოთ)
         files = sorted(os.listdir(output_dir), key=lambda f: os.path.getmtime(os.path.join(output_dir, f)), reverse=True)
         
         if not files:
-            st.info("📄 ფაილები ჯერ არ დაგენერირებულა. დააჭირე 'გაუშვი ნაკადი'.")
+            st.info("📄 ფაილები ჯერ არ დაგენერირებულა.")
         else:
-            st.caption(f"📁 ნაპოვნია {len(files)} ფაილი. ყველაზე ახალი ზემოთ.")
+            st.caption(f"📁 ნაპოვნია {len(files)} ფაილი.")
             cols = st.columns(3)
             
             for i, f in enumerate(files):
@@ -97,32 +98,32 @@ with st.expander("📂 დაგენერირებული ფაილ�
                     st.markdown(f"**{f}**")
                     st.caption(f"📦 {size_kb:.1f} KB")
                     
-                    # 🗑️ წაშლის ღილაკი
-                    if st.button("🗑️ წაშლა", key=f"del_{f}", type="secondary", use_container_width=True):
+                    # 🗑️ წაშლის ღილაკი (დამატებულია key პარამეტრი)
+                    if st.button("🗑️ წაშლა", key=f"btn_del_{f}", type="secondary", use_container_width=True):
                         try:
                             os.remove(full_path)
-                            st.toast(f"✅ {f} წარმატებით წაიშალა", icon="🗑️")
+                            st.toast(f"✅ {f} წაიშალა", icon="🗑️")
                             st.rerun() # სიის განახლება
                         except Exception as e:
                             st.error(f"❌ წაშლა ვერ მოხერხდა: {e}")
 
-                    # პრევიუ & ჩამოტვირთვა
+                    # პრევიუ & ჩამოტვირთვა (დამატებულია key პარამეტრები)
                     try:
                         if f.endswith(".mp4"):
                             st.video(full_path)
                             with open(full_path, "rb") as file:
-                                st.download_button(label="⬇️ ჩამოტვირთე MP4", data=file, file_name=f, mime="video/mp4", use_container_width=True)
+                                st.download_button(label="⬇️ MP4", data=file, file_name=f, mime="video/mp4", key=f"dl_{f}", use_container_width=True)
                         elif f.endswith(".png"):
                             st.image(full_path)
                             with open(full_path, "rb") as file:
-                                st.download_button(label="⬇️ ჩამოტვირთე PNG", data=file, file_name=f, mime="image/png", use_container_width=True)
+                                st.download_button(label="⬇️ PNG", data=file, file_name=f, mime="image/png", key=f"dl_{f}", use_container_width=True)
                         elif f.endswith(".mp3"):
                             st.audio(full_path)
                             with open(full_path, "rb") as file:
-                                st.download_button(label="⬇️ ჩამოტვირთე MP3", data=file, file_name=f, mime="audio/mpeg", use_container_width=True)
+                                st.download_button(label="⬇️ MP3", data=file, file_name=f, mime="audio/mpeg", key=f"dl_{f}", use_container_width=True)
                     except Exception as e:
-                        st.error(f"❌ ვერ ჩაიტვირთა: {e}")
+                        st.error(f"❌ ჩამოტვირთვა ვერ მოხერხდა: {e}")
     else:
         st.warning("📁 output/ საქაღალდე ჯერ არ არსებობს.")
 
-st.caption("💡 Streamlit Cloud-ზე ფაილები ინახება მხოლოდ აქტიური სესიის დროს. წაშლა არის სამუდამო. ჩამოტვირთე ადგილობრივ მოწყობილობაში მნიშვნელოვანი ფაილების შესანახად.")
+st.caption("💡 წაშლა არის სამუდამო. ჩამოტვირთე მნიშვნელოვანი ფაილები.")
