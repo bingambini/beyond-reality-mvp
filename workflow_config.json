@@ -1,127 +1,261 @@
 {
   "name": "AI Cinematic Pipeline",
   "version": "1.0",
+  "description": "ავტომატური კონტენტის ფაბრიკა: თემა → სცენარი → ხმა/ვიზუალი → ვიდეო",
+  "author": "Beyond Reality",
   "nodes": [
     {
       "id": "theme_node",
       "type": "ThemeNode",
       "label": "🎭 თემის გენერატორი",
-      "description": "ქმნის კინემატოგრაფიულ თემას მულტი-პროვაიდერით",
+      "description": "ქმნის კინემატოგრაფიულ თემას მულტი-პროვაიდერით (Gemini/OpenRouter/Groq)",
       "config": {
         "providers": ["gemini_text", "openrouter", "groq"],
-        "prompt_template": "შექმენი უნიკალური კინემატოგრაფიული თემა...",
-        "max_sentences": 8
+        "prompt_template": "შექმენი უნიკალური კინემატოგრაფიული თემა 9:16 ვიდეოსთვის. მიმართულება: მელანქოლიური, რომანტიკული, ქალაქური ან ბუნებრივი სცენა. აღწერე ვიზუალი, დაამატე ემოციური კონტექსტი, იყავი ლაკონიური (მაქს. 5-8 წინადადება).",
+        "max_sentences": 8,
+        "max_tokens": 500,
+        "language": "ka"
       },
       "position": { "x": 100, "y": 200 },
-      "color": "#4CAF50"
+      "color": "#4CAF50",
+      "icon": "🎭",
+      "category": "text_generation",
+      "retry_attempts": 2,
+      "timeout_seconds": 30
     },
     {
       "id": "script_node",
       "type": "ScriptNode",
       "label": "📝 სცენარის მწერალი",
-      "description": "წერს ემოციურ მიკრო-ისტორიას თემის მიხედვით",
+      "description": "წერს ემოციურ მიკრო-ისტორიას (2-4 წინადადება) თემის მიხედვით",
       "config": {
         "providers": ["gemini_text", "openrouter", "groq"],
-        "prompt_template": "დაწერე ემოციური მიკრო-ისტორია...",
-        "max_sentences": 4
+        "prompt_template": "დაწერე ემოციური მიკრო-ისტორია (2-4 წინადადება) ქართულად. თემა: '{theme}'. სტილი: მელანქოლიური, კინემატოგრაფიული. პირდაპირ შედი სცენაში, არ დაიწყო 'აი' ან 'წარმოიდგინე'.",
+        "max_sentences": 4,
+        "max_tokens": 300,
+        "temperature": 0.8,
+        "language": "ka",
+        "clean_incomplete": true
       },
       "position": { "x": 400, "y": 200 },
-      "color": "#2196F3"
+      "color": "#2196F3",
+      "icon": "📝",
+      "category": "text_generation",
+      "retry_attempts": 2,
+      "timeout_seconds": 30
     },
     {
       "id": "voice_node",
       "type": "VoiceNode",
       "label": "🎙️ ხმის სინთეზატორი",
-      "description": "ქმნის ქართულ ხმოვან ნარაციას Edge-TTS-ით",
+      "description": "ქმნის ქართულ ხმოვან ნარაციას Edge-TTS-ით (Nino/Giorgi)",
       "config": {
+        "engine": "edge_tts",
         "voices": ["ka-GE-NinoNeural", "ka-GE-GiorgiNeural"],
-        "speed": 1.0
+        "fallback_voice": "ka-GE-GiorgiNeural",
+        "speed": 1.0,
+        "pitch": 0,
+        "volume": 100,
+        "output_format": "mp3",
+        "sample_rate": 24000
       },
       "position": { "x": 700, "y": 200 },
-      "color": "#FF9800"
+      "color": "#FF9800",
+      "icon": "🎙️",
+      "category": "audio_generation",
+      "retry_attempts": 2,
+      "timeout_seconds": 45
     },
     {
       "id": "visual_node",
       "type": "VisualNode",
       "label": "🎨 ვიზუალის გენერატორი",
-      "description": "ქმნის 9:16 კინემატოგრაფიულ სურათს",
+      "description": "ქმნის 9:16 კინემატოგრაფიულ სურათს (HF Flux / Pollinations)",
       "config": {
         "providers": ["hf_image", "pollinations"],
+        "prompt_template": "Cinematic vertical shot (9:16). {theme}. Moody, emotional atmosphere, high detail, 8k, photorealistic, dramatic lighting, soft shadows.",
         "width": 1080,
         "height": 1920,
-        "retry_attempts": 3
+        "aspect_ratio": "9:16",
+        "negative_prompt": "blurry, low quality, distorted, watermark, text, logo",
+        "retry_attempts": 3,
+        "timeout_seconds": 90,
+        "seed_random": true
       },
       "position": { "x": 400, "y": 400 },
-      "color": "#9C27B0"
+      "color": "#9C27B0",
+      "icon": "🎨",
+      "category": "image_generation",
+      "retry_attempts": 3,
+      "timeout_seconds": 90
     },
     {
       "id": "assembler_node",
       "type": "AssemblerNode",
-      "label": "🎬 ვიდეოს ანამატორი",
-      "description": "აერთიანებს სურათს, ხმას და ადებს კინემატოგრაფიულ ზუმს",
+      "label": "🎬 ვიდეოს ანიმატორი",
+      "description": "აერთიანებს სურათს, ხმას და ადებს კინემატოგრაფიულ ზუმს (FFmpeg)",
       "config": {
-        "zoom_effect": true,
-        "zoom_speed": 0.0015,
-        "mix_background_music": true
+        "engine": "ffmpeg",
+        "video_codec": "libx264",
+        "audio_codec": "aac",
+        "fps": 24,
+        "pixel_format": "yuv420p",
+        "zoom_effect": {
+          "enabled": true,
+          "type": "slow_zoom_in",
+          "speed": 0.0015,
+          "max_zoom": 1.5,
+          "anchor": "center"
+        },
+        "audio_mixing": {
+          "enabled": true,
+          "narration_volume": 1.5,
+          "music_volume": 0.3,
+          "fade_in": 0.5,
+          "fade_out": 1.0
+        },
+        "background_music": {
+          "enabled": true,
+          "url": "https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=ambient-piano-loop-114773.mp3",
+          "license": "CC0"
+        },
+        "output_format": "mp4",
+        "output_resolution": "1080x1920"
       },
       "position": { "x": 700, "y": 400 },
-      "color": "#F44336"
+      "color": "#F44336",
+      "icon": "🎬",
+      "category": "video_assembly",
+      "retry_attempts": 1,
+      "timeout_seconds": 120
     },
     {
       "id": "storage_node",
       "type": "StorageNode",
-      "label": "💾 შენახვა",
-      "description": "ინახავს მზა ვიდეოს და აფიქსირებს ლოგებს",
+      "label": "💾 შენახვა და ექსპორტი",
+      "description": "ინახავს მზა ვიდეოს, ქმნის ლოგებს და ამზადებს ფაილს გაზიარებისთვის",
       "config": {
         "output_dir": "./output",
-        "log_level": "info"
+        "filename_pattern": "cinematic_{timestamp}_{theme_hash}.mp4",
+        "log_level": "info",
+        "log_file": "pipeline.log",
+        "cleanup_temp": true,
+        "metadata": {
+          "include_theme": true,
+          "include_script": true,
+          "include_timestamp": true,
+          "include_providers": true
+        },
+        "export_formats": ["mp4", "png", "mp3", "json"]
       },
       "position": { "x": 1000, "y": 300 },
-      "color": "#607D8B"
+      "color": "#607D8B",
+      "icon": "💾",
+      "category": "storage",
+      "retry_attempts": 1,
+      "timeout_seconds": 10
     }
   ],
   "edges": [
     {
+      "id": "edge_theme_to_script",
       "from": "theme_node",
       "to": "script_node",
       "output_key": "theme",
       "input_key": "theme",
-      "label": "თემა"
+      "label": "თემა",
+      "description": "დაგენერირებული თემა გადადის სცენარის მწერალთან",
+      "color": "#2196F3",
+      "style": "solid"
     },
     {
+      "id": "edge_script_to_voice",
       "from": "script_node",
       "to": "voice_node",
       "output_key": "script",
       "input_key": "text",
-      "label": "ტექსტი"
+      "label": "ტექსტი",
+      "description": "დაწერილი სცენარი გადადის ხმის სინთეზატორთან",
+      "color": "#FF9800",
+      "style": "solid"
     },
     {
+      "id": "edge_theme_to_visual",
       "from": "theme_node",
       "to": "visual_node",
       "output_key": "theme",
       "input_key": "prompt_context",
-      "label": "ვიზუალური კონტექსტი"
+      "label": "ვიზუალური კონტექსტი",
+      "description": "თემა გამოიყენება ვიზუალის პრომპტის შესაქმნელად",
+      "color": "#9C27B0",
+      "style": "dashed"
     },
     {
+      "id": "edge_voice_to_assembler",
       "from": "voice_node",
       "to": "assembler_node",
       "output_key": "audio_path",
       "input_key": "audio_path",
-      "label": "ხმა"
+      "label": "ხმა",
+      "description": "დაგენერირებული აუდიო ფაილი გადადის ვიდეოს ანამატორთან",
+      "color": "#FF5722",
+      "style": "solid"
     },
     {
+      "id": "edge_visual_to_assembler",
       "from": "visual_node",
       "to": "assembler_node",
       "output_key": "image_path",
       "input_key": "image_path",
-      "label": "სურათი"
+      "label": "სურათი",
+      "description": "დაგენერირებული სურათი გადადის ვიდეოს ანამატორთან",
+      "color": "#E91E63",
+      "style": "solid"
     },
     {
+      "id": "edge_assembler_to_storage",
       "from": "assembler_node",
       "to": "storage_node",
       "output_key": "video_path",
       "input_key": "video_path",
-      "label": "ვიდეო"
+      "label": "ვიდეო",
+      "description": "მზა ვიდეო ფაილი გადადის შესანახად",
+      "color": "#607D8B",
+      "style": "bold"
     }
-  ]
+  ],
+  "global_config": {
+    "execution_mode": "sequential",
+    "parallel_nodes": ["voice_node", "visual_node"],
+    "error_handling": {
+      "on_node_failure": "stop_pipeline",
+      "log_errors": true,
+      "retry_on_timeout": true
+    },
+    "logging": {
+      "level": "info",
+      "format": "[{timestamp}] [{level}] {node_id}: {message}",
+      "output": ["console", "file"]
+    },
+    "vault_integration": {
+      "enabled": true,
+      "config_file": "vault_config.json",
+      "auto_fallback": true
+    }
+  },
+  "mermaid_config": {
+    "theme": "default",
+    "flowchart": {
+      "useMaxWidth": true,
+      "htmlLabels": true,
+      "curve": "basis"
+    },
+    "styles": {
+      "text_generation": "fill:#e3f2fd,stroke:#2196F3,stroke-width:2px",
+      "audio_generation": "fill:#fff3e0,stroke:#FF9800,stroke-width:2px",
+      "image_generation": "fill:#f3e5f5,stroke:#9C27B0,stroke-width:2px",
+      "video_assembly": "fill:#ffebee,stroke:#F44336,stroke-width:2px",
+      "storage": "fill:#eceff1,stroke:#607D8B,stroke-width:2px"
+    }
+  }
 }
