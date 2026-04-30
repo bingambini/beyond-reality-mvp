@@ -1,96 +1,94 @@
 import json
-import importlib
 from typing import Dict, List, Any
 
-class NodeEngine:
-    """გამშვები ძრავა: ტვირთავს ნოდებს, აკავშირებს მათ და ასრულებს"""
+class SimpleNodeEngine:
+    """გამარტივებული ძრავა: მართავს ნაკადს და ქმნის Mermaid დიაგრამას"""
     
-    def __init__(self, config_path: str, logger):
+    def __init__(self, config_path: str, logger, vault):
         self.logger = logger
+        self.vault = vault
         with open(config_path, "r", encoding="utf-8") as f:
             self.workflow = json.load(f)
         
-        self.nodes: Dict[str, Any] = {}
-        self._load_nodes()
+        # მონაცემთა საცავი ნოდებს შორის გადასაცემად
+        self.data_store = {}
     
-    def _load_nodes(self):
-        """ტვირთავს ყველა ნოდს კონფიგურაციიდან"""
-        for node_config in self.workflow["nodes"]:
-            node_type = node_config["type"]
-            module = importlib.import_module(f"nodes.{node_type.lower().replace('node', '')}_node")
-            node_class = getattr(module, node_type)
+    def execute(self) -> bool:
+        """ასრულებს ნაკადს პირდაპირი ლოგიკით (მარტივი ვერსია)"""
+        self.logger.add("NodeEngine", "🚀 ნაკადის დაწყება...", "start")
+        
+        try:
+            # 1. თემის ნოდი
+            self.logger.add("theme_node", "🔄 იწყება...", "info")
+            from agents.theme_agent import ThemeAgent  # პირდაპირი იმპორტი
+            theme_result = ThemeAgent(self.vault, self.logger).execute()
+            if not theme_result: return False
+            self.data_store["theme"] = theme_result
+            self.logger.add("theme_node", "✅ დასრულდა", "success")
             
-            node = node_class(
-                node_id=node_config["id"],
-                config=node_config["config"],
-                logger=self.logger
-            )
-            self.nodes[node_config["id"]] = node
-    
-    def _get_execution_order(self) -> List[str]:
-        """განსაზღვრავს ნოდების შესრულების თანმიმდევრობას (topological sort)"""
-        # მარტივი ვერსია: ეყრდნობა edges-ის თანმიმდევრობას
-        order = []
-        visited = set()
-        
-        def visit(node_id):
-            if node_id in visited:
-                return
-            visited.add(node_id)
-            # ჯერ შეიყვანე წინამორბედები
-            for edge in self.workflow["edges"]:
-                if edge["to"] == node_id and edge["from"] not in visited:
-                    visit(edge["from"])
-            order.append(node_id)
-        
-        for node in self.workflow["nodes"]:
-            visit(node["id"])
-        
-        return order
-    
-    def execute(self, start_node: str = None) -> bool:
-        """ასრულებს მთელ ნაკადს"""
-        order = self._get_execution_order()
-        self.logger.add("NodeEngine", f"🔄 შესრულების თანმიმდევრობა: {' → '.join(order)}", "start")
-        
-        for node_id in order:
-            if start_node and node_id != start_node:
-                continue
+            # 2. სცენარის ნოდი (იღებს თემას)
+            self.logger.add("script_node", "🔄 იწყება...", "info")
+            from agents.script_agent import ScriptAgent
+            script_result = ScriptAgent(self.vault, self.logger).execute(self.data_store["theme"])
+            if not script_result: return False
+            self.data_store["script"] = script_result
+            self.logger.add("script_node", "✅ დასრულდა", "success")
             
-            node = self.nodes[node_id]
+            # 3. ხმის და ვიზუალის ნოდები (პარალელურად)
+            self.logger.add("voice_node", "🔄 იწყება...", "info")
+            from agents.voice_agent import VoiceAgent
+            import asyncio, os, datetime
+            ts = datetime.datetime.now().strftime("%H%M%S")
+            audio_path = os.path.join("./output", f"voice_{ts}.mp3")
+            audio_result = asyncio.run(VoiceAgent(self.logger).execute(self.data_store["script"], audio_path))
+            if not audio_result: return False
+            self.data_store["audio"] = audio_result
+            self.logger.add("voice_node", "✅ დასრულდა", "success")
             
-            # გადაეცი შეყვანები edges-ის მიხედვით
-            for edge in self.workflow["edges"]:
-                if edge["to"] == node_id:
-                    from_node = self.nodes[edge["from"]]
-                    value = from_node.get_output(edge["output_key"])
-                    if value is not None:
-                        node.set_input(edge["input_key"], value)
+            self.logger.add("visual_node", "🔄 იწყება...", "info")
+            from agents.visual_agent import VisualAgent
+            visual_result = VisualAgent(self.vault, self.logger).execute(self.data_store["theme"], 1080, 1920)
+            if not visual_result: return False
+            img_path = os.path.join("./output", f"image_{ts}.png")
+            visual_result.save(img_path)
+            self.data_store["image"] = img_path
+            self.logger.add("visual_node", "✅ დასრულდა", "success")
             
-            # შეასრულე ნოდი
-            success = node.execute()
-            if not success:
-                self.logger.add("NodeEngine", f"❌ ნაკადი შეჩერდა {node_id}-ზე", "error")
-                return False
-        
-        self.logger.add("NodeEngine", "✅ მთლიანი ნაკადი წარმატებით დასრულდა", "success")
-        return True
+            # 4. ვიდეოს აწყობა
+            self.logger.add("assembler_node", "🔄 იწყება...", "info")
+            from agents.assembler_agent import AssemblerAgent
+            dur = 12 # ან აუდიოს ხანგრძლივობა
+            video_path = os.path.join("./output", f"video_{ts}.mp4")
+            video_result = AssemblerAgent(self.logger).execute(self.data_store["image"], self.data_store["audio"], dur, video_path)
+            if not video_result: return False
+            self.data_store["video"] = video_path
+            self.logger.add("assembler_node", "✅ დასრულდა", "success")
+            
+            # 5. შენახვა
+            self.logger.add("storage_node", "🔄 იწყება...", "info")
+            from agents.storage_agent import StorageAgent
+            StorageAgent(self.logger).execute(os.path.dirname(video_path))
+            self.logger.add("storage_node", "✅ დასრულდა", "success")
+            
+            self.logger.add("NodeEngine", "✅ მთლიანი ნაკადი წარმატებით დასრულდა!", "success")
+            return True
+            
+        except Exception as e:
+            self.logger.add("NodeEngine", f"❌ კრიტიკული შეცდომა: {str(e)}", "error")
+            return False
     
     def get_mermaid_diagram(self) -> str:
-        """ქმნის Mermaid.js დიაგრამას ვიზუალიზაციისთვის"""
+        """ქმნის Mermaid.js დიაგრამას"""
         lines = ["graph LR"]
-        
-        # ნოდები
         for node in self.workflow["nodes"]:
-            color = node.get("color", "#999")
-            lines.append(f'    {node["id"]}["{node["label"]}"]:::nodeStyle')
+            # Mermaid-ისთვის უნიკალური ID
+            safe_id = node["id"].replace("_", "")
+            lines.append(f'    {safe_id}["{node["label"]}"]')
         
-        # კავშირები
         for edge in self.workflow["edges"]:
+            from_id = edge["from"].replace("_", "")
+            to_id = edge["to"].replace("_", "")
             label = edge.get("label", "")
-            lines.append(f'    {edge["from"]} -- "{label}" --> {edge["to"]}')
-        
-        # სტილები
-        lines.append("    classDef nodeStyle fill:#f9f,stroke:#333,stroke-width:2px")
+            lines.append(f'    {from_id} -- "{label}" --> {to_id}')
         
         return "\n".join(lines)
