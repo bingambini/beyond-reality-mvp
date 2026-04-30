@@ -1,48 +1,37 @@
 import streamlit as st
 import json
-from node_engine import SimpleNodeEngine  # ✅ სწორი სახელი
+from node_engine import SimpleNodeEngine  # ✅ დარწმუნდი რომ აქ SimpleNodeEngine წერია
 from vault_system import VaultManager
 
 st.set_page_config(page_title="🎬 Node-Based Pipeline", page_icon="🧩", layout="wide")
 
-# ინიციალიზაცია
+# 1. სესიის ინიციალიზაცია
 if "vault" not in st.session_state:
     st.session_state.vault = VaultManager()
 if "engine" not in st.session_state:
     try:
+        # ვქმნით ძრავას (ლოგერი ჯერ არის None)
         st.session_state.engine = SimpleNodeEngine("workflow_config.json", None, st.session_state.vault)
     except Exception as e:
         st.error(f"❌ ნაკადის ჩატვირთვა ვერ მოხერხდა: {e}")
 
-# Sidebar
+# 2. გვერდითა პანელი (Sidebar)
 with st.sidebar:
     st.header("🔐 API სეიფი")
-    # ... (შეინარჩუნე შენი სეიფის UI კოდი აქ) ...
+    # >>> აქ ჩასვი შენი სეიფის UI კოდი (Text Inputs, Save Button) <<<
+    # მაგალითად:
+    # current_key = st.text_input("Gemini Key", value=st.session_state.vault.get_key("gemini_text", 0), type="password")
+    # if st.button("💾 შენახვა"): st.session_state.vault.update_key("gemini_text", 0, current_key)
     
     st.divider()
     st.header("⚙️ ნაკადის მართვა")
+    
+    # ღილაკი მხოლოდ "დროშას" რთავს და აკეთებს Rerun-ს
     if st.button("▶️ გაუშვი მთლიანი ნაკადი"):
-        if st.session_state.engine:
-            class StreamlitLogger:
-                def __init__(self, container):
-                    self.container = container
-                    self.entries = []
-                def add(self, agent, msg, level="info", indent=0):
-                    icons = {"info":"🔹","success":"✅","warning":"⚠️","error":"❌","start":"🚀","end":"🏁"}
-                    icon = icons.get(level, "•")
-                    prefix = "  " * indent
-                    self.entries.append(f"{prefix}{icon} {agent}: {msg}")
-                    with self.container:
-                        st.code("\n".join(self.entries[-30:]), language="text")
-            
-            st.session_state.engine.logger = StreamlitLogger(log_container)
-            success = st.session_state.engine.execute()
-            if success:
-                st.success("✅ ნაკადი წარმატებით დასრულდა!")
-            else:
-                st.error("❌ ნაკადი ვერ დასრულდა. შეამოწმე ლოგები.")
+        st.session_state.run_pipeline = True
+        st.rerun() # სკრიპტის ხელახლა გაშვება, რათა მიაღწიოს execution ბლოკს
 
-# მთავარი ხედი
+# 3. მთავარი ინტერფეისი
 st.title("🧩 AI Cinematic Pipeline — ვიზუალური ნოდური სისტემა")
 
 # Mermaid.js დიაგრამა
@@ -58,14 +47,50 @@ if st.session_state.engine:
 else:
     st.info("👉 ნაკადი ვერ ჩაიტვირთა. შეამოწმე workflow_config.json")
 
-# ლოგების კონტეინერი
+# 4. ლოგების კონტეინერი (ახლა უსაფრთხოდ შეგვიძლია განვსაზღვროთ)
 st.divider()
 st.subheader("📊 რეალურ დროის ლოგები")
 log_container = st.empty()
 
+# 5. გადავადებული შესრულება (Deferred Execution)
+# ეს ბლოკი მუშაობს მხოლოდ მაშინ, როცა ღილაკი დააჭირე
+if st.session_state.get("run_pipeline"):
+    
+    # ლოგერის კლასი (განისაზღვრება აქ, რადგან log_container უკვე არსებობს)
+    class StreamlitLogger:
+        def __init__(self, container):
+            self.container = container
+            self.entries = []
+        def add(self, agent, msg, level="info", indent=0):
+            icons = {"info":"🔹","success":"✅","warning":"⚠️","error":"❌","start":"🚀","end":"🏁"}
+            icon = icons.get(level, "•")
+            prefix = "  " * indent
+            self.entries.append(f"{prefix}{icon} {agent}: {msg}")
+            with self.container:
+                st.code("\n".join(self.entries[-30:]), language="text")
+
+    if st.session_state.engine:
+        # ვუკავშირებთ ლოგერს კონტეინერს
+        st.session_state.engine.logger = StreamlitLogger(log_container)
+        
+        # ვუშვებთ ნაკადს სპინერის თანხლებით
+        with st.spinner("⏳ ნაკადი მუშაობს... გთხოვთ მოიცადოთ"):
+            success = st.session_state.engine.execute()
+        
+        # შედეგის ჩვენება
+        if success:
+            st.toast("🎉 ნაკადი წარმატებით დასრულდა!", icon="✅")
+        else:
+            st.toast("❌ ნაკადი ვერ დასრულდა. შეამოწმე ლოგები.", icon="🚫")
+        
+        # ვთიშავთ დროშას, რომ შემდეგი ღილაკის დაჭერამდე არ გაეშვას
+        st.session_state.run_pipeline = False
+        st.rerun() # ბოლო განახლება სუფთა ინტერფეისისთვის
+
+# ფეისერი
 st.caption("""
 💡 **როგორ მუშაობს:**
 1. ზემოთ ხედავ ვიზუალურ დიაგრამას (Mermaid.js)
-2. "გაუშვი მთლიანი ნაკადი" ასრულებს ყველა ნოდს თანმიმდევრულად
-3. ლოგებში ჩანს თითოეული ნოდის სტატუსი
+2. გვერდითა პანელში დააჭირე "გაუშვი ნაკადი"
+3. ლოგები გამოჩნდება აქ, ქვემოთ
 """)
