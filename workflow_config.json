@@ -1,0 +1,127 @@
+{
+  "name": "AI Cinematic Pipeline",
+  "version": "1.0",
+  "nodes": [
+    {
+      "id": "theme_node",
+      "type": "ThemeNode",
+      "label": "🎭 თემის გენერატორი",
+      "description": "ქმნის კინემატოგრაფიულ თემას მულტი-პროვაიდერით",
+      "config": {
+        "providers": ["gemini_text", "openrouter", "groq"],
+        "prompt_template": "შექმენი უნიკალური კინემატოგრაფიული თემა...",
+        "max_sentences": 8
+      },
+      "position": { "x": 100, "y": 200 },
+      "color": "#4CAF50"
+    },
+    {
+      "id": "script_node",
+      "type": "ScriptNode",
+      "label": "📝 სცენარის მწერალი",
+      "description": "წერს ემოციურ მიკრო-ისტორიას თემის მიხედვით",
+      "config": {
+        "providers": ["gemini_text", "openrouter", "groq"],
+        "prompt_template": "დაწერე ემოციური მიკრო-ისტორია...",
+        "max_sentences": 4
+      },
+      "position": { "x": 400, "y": 200 },
+      "color": "#2196F3"
+    },
+    {
+      "id": "voice_node",
+      "type": "VoiceNode",
+      "label": "🎙️ ხმის სინთეზატორი",
+      "description": "ქმნის ქართულ ხმოვან ნარაციას Edge-TTS-ით",
+      "config": {
+        "voices": ["ka-GE-NinoNeural", "ka-GE-GiorgiNeural"],
+        "speed": 1.0
+      },
+      "position": { "x": 700, "y": 200 },
+      "color": "#FF9800"
+    },
+    {
+      "id": "visual_node",
+      "type": "VisualNode",
+      "label": "🎨 ვიზუალის გენერატორი",
+      "description": "ქმნის 9:16 კინემატოგრაფიულ სურათს",
+      "config": {
+        "providers": ["hf_image", "pollinations"],
+        "width": 1080,
+        "height": 1920,
+        "retry_attempts": 3
+      },
+      "position": { "x": 400, "y": 400 },
+      "color": "#9C27B0"
+    },
+    {
+      "id": "assembler_node",
+      "type": "AssemblerNode",
+      "label": "🎬 ვიდეოს ანამატორი",
+      "description": "აერთიანებს სურათს, ხმას და ადებს კინემატოგრაფიულ ზუმს",
+      "config": {
+        "zoom_effect": true,
+        "zoom_speed": 0.0015,
+        "mix_background_music": true
+      },
+      "position": { "x": 700, "y": 400 },
+      "color": "#F44336"
+    },
+    {
+      "id": "storage_node",
+      "type": "StorageNode",
+      "label": "💾 შენახვა",
+      "description": "ინახავს მზა ვიდეოს და აფიქსირებს ლოგებს",
+      "config": {
+        "output_dir": "./output",
+        "log_level": "info"
+      },
+      "position": { "x": 1000, "y": 300 },
+      "color": "#607D8B"
+    }
+  ],
+  "edges": [
+    {
+      "from": "theme_node",
+      "to": "script_node",
+      "output_key": "theme",
+      "input_key": "theme",
+      "label": "თემა"
+    },
+    {
+      "from": "script_node",
+      "to": "voice_node",
+      "output_key": "script",
+      "input_key": "text",
+      "label": "ტექსტი"
+    },
+    {
+      "from": "theme_node",
+      "to": "visual_node",
+      "output_key": "theme",
+      "input_key": "prompt_context",
+      "label": "ვიზუალური კონტექსტი"
+    },
+    {
+      "from": "voice_node",
+      "to": "assembler_node",
+      "output_key": "audio_path",
+      "input_key": "audio_path",
+      "label": "ხმა"
+    },
+    {
+      "from": "visual_node",
+      "to": "assembler_node",
+      "output_key": "image_path",
+      "input_key": "image_path",
+      "label": "სურათი"
+    },
+    {
+      "from": "assembler_node",
+      "to": "storage_node",
+      "output_key": "video_path",
+      "input_key": "video_path",
+      "label": "ვიდეო"
+    }
+  ]
+}
